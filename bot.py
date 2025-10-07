@@ -4,7 +4,7 @@ import os
 import time
 import sys
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters, CallbackContext
 
 # Настройка логирования
 logging.basicConfig(
@@ -25,7 +25,7 @@ if not TOKEN:
 
 print(f"✅ Токен бота получен: {TOKEN[:10]}...")
 
-# Остальной код остается БЕЗ ИЗМЕНЕНИЙ...
+# Путь к базе данных
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'clan_bot.db')
 
 def get_db_connection():
@@ -106,7 +106,7 @@ def init_db():
     print("✅ База данных инициализирована")
 
 # Главное меню
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def start(update: Update, context: CallbackContext):
     keyboard = [
         [InlineKeyboardButton("📚 Просмотреть разделы", callback_data='view_sections')],
         [InlineKeyboardButton("➕ Создать раздел", callback_data='create_section')],
@@ -117,16 +117,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     user = update.effective_user
-    await update.message.reply_text(
+    update.message.reply_text(
         f'🏰 Добро пожаловать, {user.first_name}, в базу знаний клана Sons of Garitos!\n\n'
         'Теперь вы можете создавать разделы, подразделы и добавлять различные типы контента!',
         reply_markup=reply_markup
     )
 
 # Просмотр разделов
-async def view_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def view_sections(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
+    query.answer()
     
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -134,7 +134,7 @@ async def view_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
     
     if not sections:
-        await query.edit_message_text("Разделы пока не созданы.")
+        query.edit_message_text("Разделы пока не созданы.")
         return
     
     keyboard = []
@@ -157,12 +157,12 @@ async def view_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data='back_to_main')])
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text("📂 Выберите раздел:", reply_markup=reply_markup)
+    query.edit_message_text("📂 Выберите раздел:", reply_markup=reply_markup)
 
 # Просмотр подразделов в разделе
-async def view_subsections(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def view_subsections(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
+    query.answer()
     
     section_id = int(query.data.split('_')[-1])
     
@@ -184,7 +184,7 @@ async def view_subsections(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await query.edit_message_text(
+        query.edit_message_text(
             f"В разделе '{section[1]}' пока нет подразделов.\n\n"
             f"Создайте первый подраздел!",
             reply_markup=reply_markup
@@ -211,16 +211,16 @@ async def view_subsections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(
+    query.edit_message_text(
         f"📁 Раздел: {section[1]}\n\n"
         f"Выберите подраздел:",
         reply_markup=reply_markup
     )
 
 # Просмотр записей в подразделе
-async def view_subsection_posts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def view_subsection_posts(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
+    query.answer()
     
     subsection_id = int(query.data.split('_')[-1])
     
@@ -243,7 +243,7 @@ async def view_subsection_posts(update: Update, context: ContextTypes.DEFAULT_TY
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await query.edit_message_text(
+        query.edit_message_text(
             f"📁 {section[1]} → {subsection[2]}\n\n"
             f"В этом подразделе пока нет записей.\n"
             f"Будьте первым, кто добавит материал!",
@@ -252,10 +252,10 @@ async def view_subsection_posts(update: Update, context: ContextTypes.DEFAULT_TY
         return
     
     # Показываем первую запись
-    await show_post(query, posts[0], 0, len(posts), subsection_id)
+    show_post(query, posts[0], 0, len(posts), subsection_id)
 
 # Показ конкретной записи
-async def show_post(query, post, current_index, total_posts, subsection_id):
+def show_post(query, post, current_index, total_posts, subsection_id):
     keyboard = []
     
     # Навигация между записями
@@ -309,29 +309,29 @@ async def show_post(query, post, current_index, total_posts, subsection_id):
     
     try:
         if post[7]:  # Если есть картинка
-            await query.message.reply_photo(
+            query.message.reply_photo(
                 photo=post[7],
                 caption=caption,
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
-            await query.message.delete()
+            query.message.delete()
         else:
-            await query.edit_message_text(
+            query.edit_message_text(
                 caption, 
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
     except Exception as e:
-        await query.edit_message_text(
+        query.edit_message_text(
             f"❌ Ошибка при отображении записи: {str(e)}",
             reply_markup=reply_markup
         )
 
 # Навигация по записям
-async def navigate_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def navigate_post(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
+    query.answer()
     
     _, _, subsection_id, index = query.data.split('_')
     subsection_id = int(subsection_id)
@@ -345,23 +345,23 @@ async def navigate_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
     
     if posts and 0 <= index < len(posts):
-        await show_post(query, posts[index], index, len(posts), subsection_id)
+        show_post(query, posts[index], index, len(posts), subsection_id)
 
 # Создание раздела
-async def create_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def create_section(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
+    query.answer()
     
-    await query.edit_message_text(
+    query.edit_message_text(
         "🏗️ **Создание нового раздела**\n\n"
         "Введите название для нового раздела:"
     )
     context.user_data['awaiting_section_name'] = True
 
 # Выбор раздела для создания подраздела
-async def create_subsection_choose_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def create_subsection_choose_section(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
+    query.answer()
     
     conn = get_db_connection()
     sections = conn.execute('SELECT * FROM sections ORDER BY id').fetchall()
@@ -377,12 +377,12 @@ async def create_subsection_choose_section(update: Update, context: ContextTypes
     keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data='back_to_main')])
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text("📁 **Создание подраздела**\n\nВыберите раздел:", reply_markup=reply_markup)
+    query.edit_message_text("📁 **Создание подраздела**\n\nВыберите раздел:", reply_markup=reply_markup)
 
 # Создание подраздела
-async def create_subsection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def create_subsection(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
+    query.answer()
     
     section_id = int(query.data.split('_')[-1])
     context.user_data['creating_subsection'] = {'section_id': section_id}
@@ -392,16 +392,16 @@ async def create_subsection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     section = conn.execute('SELECT name FROM sections WHERE id = ?', (section_id,)).fetchone()
     conn.close()
     
-    await query.edit_message_text(
+    query.edit_message_text(
         f"📁 **Создание подраздела в разделе:** {section[0]}\n\n"
         "Введите название для нового подраздела:"
     )
     context.user_data['awaiting_subsection_name'] = True
 
 # Выбор раздела для добавления записи
-async def add_post_choose_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def add_post_choose_section(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
+    query.answer()
     
     conn = get_db_connection()
     sections = conn.execute('SELECT * FROM sections ORDER BY id').fetchall()
@@ -422,12 +422,12 @@ async def add_post_choose_section(update: Update, context: ContextTypes.DEFAULT_
     keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data='back_to_main')])
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text("📝 **Добавление записи**\n\nВыберите раздел:", reply_markup=reply_markup)
+    query.edit_message_text("📝 **Добавление записи**\n\nВыберите раздел:", reply_markup=reply_markup)
 
 # Выбор подраздела для добавления записи
-async def add_post_choose_subsection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def add_post_choose_subsection(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
+    query.answer()
     
     section_id = int(query.data.split('_')[-1])
     
@@ -451,16 +451,16 @@ async def add_post_choose_subsection(update: Update, context: ContextTypes.DEFAU
     keyboard.append([InlineKeyboardButton("◀️ Назад к разделам", callback_data='add_post_choose_section')])
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(
+    query.edit_message_text(
         f"📝 **Добавление записи в раздел:** {section[0]}\n\n"
         f"Выберите подраздел:",
         reply_markup=reply_markup
     )
 
 # Начало добавления записи - выбор типа контента
-async def start_add_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def start_add_post(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
+    query.answer()
     
     subsection_id = int(query.data.split('_')[-1])
     context.user_data['adding_post'] = {'subsection_id': subsection_id}
@@ -481,7 +481,7 @@ async def start_add_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(
+    query.edit_message_text(
         f"📝 **Добавление записи**\n\n"
         f"Раздел: {section[0]}\n"
         f"Подраздел: {subsection[2]}\n\n"
@@ -490,20 +490,20 @@ async def start_add_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # Обработка выбора типа контента
-async def choose_content_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def choose_content_type(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
+    query.answer()
     
     content_type = query.data.replace('content_type_', '')
     context.user_data['adding_post']['content_type'] = content_type
     
-    await query.edit_message_text(
+    query.edit_message_text(
         "✏️ **Введите заголовок для вашей записи:**"
     )
     context.user_data['awaiting_post_title'] = True
 
 # Обработка текстовых сообщений
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def handle_message(update: Update, context: CallbackContext):
     user_data = context.user_data
     user = update.effective_user
     
@@ -521,8 +521,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         
         user_data.clear()
-        await update.message.reply_text(f"✅ Раздел '{section_name}' успешно создан!")
-        await show_main_menu(update, context)
+        update.message.reply_text(f"✅ Раздел '{section_name}' успешно создан!")
+        show_main_menu(update, context)
     
     elif user_data.get('awaiting_subsection_name'):
         # Создание подраздела
@@ -539,8 +539,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         
         user_data.clear()
-        await update.message.reply_text(f"✅ Подраздел '{subsection_name}' успешно создан!")
-        await show_main_menu(update, context)
+        update.message.reply_text(f"✅ Подраздел '{subsection_name}' успешно создан!")
+        show_main_menu(update, context)
     
     elif user_data.get('awaiting_post_title'):
         # Получили заголовок записи
@@ -553,19 +553,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Для текста и ссылок сразу запрашиваем текст
             user_data['awaiting_post_text'] = True
             if content_type == 'link':
-                await update.message.reply_text(
+                update.message.reply_text(
                     "✅ Заголовок сохранен!\n\n"
                     "Теперь введите текст записи:"
                 )
             else:
-                await update.message.reply_text(
+                update.message.reply_text(
                     "✅ Заголовок сохранен!\n\n"
                     "Теперь введите текст записи:"
                 )
         elif content_type in ['image', 'mixed']:
             # Для картинок запрашиваем изображение
             user_data['awaiting_post_image'] = True
-            await update.message.reply_text(
+            update.message.reply_text(
                 "✅ Заголовок сохранен!\n\n"
                 "Теперь отправьте картинку для этой записи 📷"
             )
@@ -580,13 +580,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if content_type == 'link':
             # Для ссылок запрашиваем URL
             user_data['awaiting_post_link'] = True
-            await update.message.reply_text(
+            update.message.reply_text(
                 "✅ Текст сохранен!\n\n"
                 "Теперь отправьте ссылку (URL):"
             )
         else:
             # Для текста сохраняем запись
-            await save_post_to_db(update, context)
+            save_post_to_db(update, context)
     
     elif user_data.get('awaiting_post_link'):
         # Получили ссылку
@@ -598,12 +598,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_data['awaiting_post_link'] = False
             user_data['awaiting_post_link_title'] = True
             
-            await update.message.reply_text(
+            update.message.reply_text(
                 "✅ Ссылка сохранена!\n\n"
                 "Теперь введите название для ссылки (или отправьте /skip чтобы использовать URL как название):"
             )
         else:
-            await update.message.reply_text(
+            update.message.reply_text(
                 "❌ Пожалуйста, введите корректный URL (должен начинаться с http:// или https://)\n\n"
                 "Попробуйте еще раз:"
             )
@@ -616,7 +616,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_data['adding_post']['link_title'] = user_data['adding_post']['link_url']
         
         user_data['awaiting_post_link_title'] = False
-        await save_post_to_db(update, context)
+        save_post_to_db(update, context)
     
     elif user_data.get('awaiting_post_content_after_image'):
         # Получили текст после картинки
@@ -628,16 +628,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if content_type == 'mixed':
             # Для mixed типа запрашиваем ссылку после текста
             user_data['awaiting_post_link'] = True
-            await update.message.reply_text(
+            update.message.reply_text(
                 "✅ Текст сохранен!\n\n"
                 "Теперь отправьте ссылку (URL) или /skip чтобы пропустить:"
             )
         else:
             # Для image типа сохраняем запись
-            await save_post_to_db(update, context)
+            save_post_to_db(update, context)
 
 # Сохранение записи в БД
-async def save_post_to_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def save_post_to_db(update: Update, context: CallbackContext):
     user_data = context.user_data
     user = update.effective_user
     
@@ -680,13 +680,13 @@ async def save_post_to_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'mixed': '🎨 запись с картинкой и ссылкой'
     }
     
-    await update.message.reply_text(
+    update.message.reply_text(
         f"✅ Вы успешно добавили {content_types[content_type]} в подраздел '{subsection[2]}' раздела '{section[0]}'!"
     )
-    await show_main_menu(update, context)
+    show_main_menu(update, context)
 
 # Обработка картинок
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def handle_photo(update: Update, context: CallbackContext):
     user_data = context.user_data
     
     if user_data.get('awaiting_post_image'):
@@ -699,29 +699,29 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if content_type == 'mixed':
             user_data['awaiting_post_content_after_image'] = True
-            await update.message.reply_text(
+            update.message.reply_text(
                 "📷 Картинка сохранена!\n\n"
                 "Теперь введите текст записи:"
             )
         else:
             # Для типа image сохраняем запись
-            await save_post_to_db(update, context)
+            save_post_to_db(update, context)
 
 # Пропуск добавления ссылки
-async def skip_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def skip_link(update: Update, context: CallbackContext):
     user_data = context.user_data
     
     if user_data.get('awaiting_post_link'):
         user_data['awaiting_post_link'] = False
-        await save_post_to_db(update, context)
+        save_post_to_db(update, context)
 
 # Пустой обработчик
-async def noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def noop(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
+    query.answer()
 
 # Главное меню
-async def show_main_menu(update, context):
+def show_main_menu(update, context):
     keyboard = [
         [InlineKeyboardButton("📚 Просмотреть разделы", callback_data='view_sections')],
         [InlineKeyboardButton("➕ Создать раздел", callback_data='create_section')],
@@ -731,9 +731,9 @@ async def show_main_menu(update, context):
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await update.message.reply_text('🏰 Главное меню базы знаний клана Sons of Garitos:', reply_markup=reply_markup)
+    update.message.reply_text('🏰 Главное меню базы знаний клана Sons of Garitos:', reply_markup=reply_markup)
 
-async def show_main_menu_from_query(query):
+def show_main_menu_from_query(query):
     keyboard = [
         [InlineKeyboardButton("📚 Просмотреть разделы", callback_data='view_sections')],
         [InlineKeyboardButton("➕ Создать раздел", callback_data='create_section')],
@@ -743,14 +743,15 @@ async def show_main_menu_from_query(query):
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text('🏰 Главное меню базы знаний клана:', reply_markup=reply_markup)
+    query.edit_message_text('🏰 Главное меню базы знаний клана:', reply_markup=reply_markup)
 
 # Возврат в главное меню
-async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def back_to_main(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
-    await show_main_menu_from_query(query)
+    query.answer()
+    show_main_menu_from_query(query)
 
+# Основная функция запуска
 def main():
     print("🚀 Запуск улучшенного бота Sons of Garitos...")
     
@@ -760,36 +761,38 @@ def main():
     
     init_db()
     
-    application = Application.builder().token(TOKEN).build()
+    # Создаем updater для версии 13.15
+    updater = Updater(TOKEN, use_context=True)
+    dispatcher = updater.dispatcher
     
     # Обработчики команд
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("skip", skip_link))
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("skip", skip_link))
     
     # Обработчики callback queries
-    application.add_handler(CallbackQueryHandler(view_sections, pattern='^view_sections$'))
-    application.add_handler(CallbackQueryHandler(create_section, pattern='^create_section$'))
-    application.add_handler(CallbackQueryHandler(create_subsection_choose_section, pattern='^create_subsection_choose_section$'))
-    application.add_handler(CallbackQueryHandler(create_subsection, pattern='^create_subsection_'))
-    application.add_handler(CallbackQueryHandler(add_post_choose_section, pattern='^add_post_choose_section$'))
-    application.add_handler(CallbackQueryHandler(add_post_choose_subsection, pattern='^add_post_choose_subsection_'))
-    application.add_handler(CallbackQueryHandler(start_add_post, pattern='^add_post_to_'))
-    application.add_handler(CallbackQueryHandler(choose_content_type, pattern='^content_type_'))
-    application.add_handler(CallbackQueryHandler(view_subsections, pattern='^view_section_'))
-    application.add_handler(CallbackQueryHandler(view_subsection_posts, pattern='^view_subsection_'))
-    application.add_handler(CallbackQueryHandler(navigate_post, pattern='^nav_post_'))
-    application.add_handler(CallbackQueryHandler(back_to_main, pattern='^back_to_main$'))
-    application.add_handler(CallbackQueryHandler(noop, pattern='^noop$'))
+    dispatcher.add_handler(CallbackQueryHandler(view_sections, pattern='^view_sections$'))
+    dispatcher.add_handler(CallbackQueryHandler(create_section, pattern='^create_section$'))
+    dispatcher.add_handler(CallbackQueryHandler(create_subsection_choose_section, pattern='^create_subsection_choose_section$'))
+    dispatcher.add_handler(CallbackQueryHandler(create_subsection, pattern='^create_subsection_'))
+    dispatcher.add_handler(CallbackQueryHandler(add_post_choose_section, pattern='^add_post_choose_section$'))
+    dispatcher.add_handler(CallbackQueryHandler(add_post_choose_subsection, pattern='^add_post_choose_subsection_'))
+    dispatcher.add_handler(CallbackQueryHandler(start_add_post, pattern='^add_post_to_'))
+    dispatcher.add_handler(CallbackQueryHandler(choose_content_type, pattern='^content_type_'))
+    dispatcher.add_handler(CallbackQueryHandler(view_subsections, pattern='^view_section_'))
+    dispatcher.add_handler(CallbackQueryHandler(view_subsection_posts, pattern='^view_subsection_'))
+    dispatcher.add_handler(CallbackQueryHandler(navigate_post, pattern='^nav_post_'))
+    dispatcher.add_handler(CallbackQueryHandler(back_to_main, pattern='^back_to_main$'))
+    dispatcher.add_handler(CallbackQueryHandler(noop, pattern='^noop$'))
     
-    # Обработчики сообщений
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    # Обработчики сообщений (обновленные фильтры)
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+    dispatcher.add_handler(MessageHandler(Filters.photo, handle_photo))
     
+    # Запускаем бота
     print("✅ Улучшенный бот запущен и готов к работе!")
-    application.run_polling()
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == '__main__':
     main()
     
-
-
