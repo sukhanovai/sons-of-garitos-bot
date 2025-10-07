@@ -21,11 +21,11 @@ if not TOKEN:
     print("📝 Убедитесь, что переменная BOT_TOKEN добавлена в Environment Variables в настройках Render")
     print("🔄 Перезапуск через 10 секунд...")
     time.sleep(10)
-    sys.exit(1)  # Перезапустит приложение
+    sys.exit(1)
 
 print(f"✅ Токен бота получен: {TOKEN[:10]}...")
 
-# Остальной код остается без изменений...
+# Остальной код остается БЕЗ ИЗМЕНЕНИЙ...
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'clan_bot.db')
 
 def get_db_connection():
@@ -104,7 +104,7 @@ def init_db():
     conn.commit()
     conn.close()
     print("✅ База данных инициализирована")
-    
+
 # Главное меню
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -791,4 +791,5 @@ def main():
 if __name__ == '__main__':
     main()
     
+
 
