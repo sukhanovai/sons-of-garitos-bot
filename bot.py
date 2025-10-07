@@ -1,7 +1,8 @@
 import logging
 import sqlite3
 import os
-import re
+import time
+import sys
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
@@ -14,7 +15,17 @@ logging.basicConfig(
 # Токен бота из переменных окружения
 TOKEN = os.environ.get('BOT_TOKEN')
 
-# Путь к базе данных
+# Проверка токена при запуске
+if not TOKEN:
+    print("❌ ОШИБКА: BOT_TOKEN не установлен!")
+    print("📝 Убедитесь, что переменная BOT_TOKEN добавлена в Environment Variables в настройках Render")
+    print("🔄 Перезапуск через 10 секунд...")
+    time.sleep(10)
+    sys.exit(1)  # Перезапустит приложение
+
+print(f"✅ Токен бота получен: {TOKEN[:10]}...")
+
+# Остальной код остается без изменений...
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'clan_bot.db')
 
 def get_db_connection():
@@ -93,7 +104,7 @@ def init_db():
     conn.commit()
     conn.close()
     print("✅ База данных инициализирована")
-
+    
 # Главное меню
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -780,3 +791,4 @@ def main():
 if __name__ == '__main__':
     main()
     
+
