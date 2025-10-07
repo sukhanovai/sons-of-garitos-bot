@@ -218,6 +218,46 @@ async def view_subsections(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
+# Выбор раздела для создания подраздела
+async def create_subsection_choose_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    conn = get_db_connection()
+    sections = conn.execute('SELECT * FROM sections ORDER BY id').fetchall()
+    conn.close()
+    
+    keyboard = []
+    for section in sections:
+        keyboard.append([InlineKeyboardButton(
+            section[1], 
+            callback_data=f"create_subsection_{section[0]}"
+        )])
+    
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data='back_to_main')])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text("📁 **Создание подраздела**\n\nВыберите раздел:", reply_markup=reply_markup)
+
+# Создание подраздела
+async def create_subsection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    section_id = int(query.data.split('_')[-1])
+    context.user_data['creating_subsection'] = {'section_id': section_id}
+    
+    # Получаем название раздела для сообщения
+    conn = get_db_connection()
+    section = conn.execute('SELECT name FROM sections WHERE id = ?', (section_id,)).fetchone()
+    conn.close()
+    
+    await query.edit_message_text(
+        f"📁 **Создание подраздела в разделе:** {section[0]}\n\n"
+        "Введите название для нового подраздела:"
+    )
+    context.user_data['awaiting_subsection_name'] = True
+
 # Возврат в главное меню
 async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -236,7 +276,38 @@ async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Обработка текстовых сообщений
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ Бот работает! Используйте /start для меню.")
+    user_data = context.user_data
+    user = update.effective_user
+    
+    if user_data.get('awaiting_subsection_name'):
+        # Создание подраздела
+        subsection_name = update.message.text
+        section_id = user_data['creating_subsection']['section_id']
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            'INSERT INTO subsections (section_id, name, description, created_by) VALUES (?, ?, ?, ?)',
+            (section_id, subsection_name, "Описание подраздела", user.id)
+        )
+        conn.commit()
+        conn.close()
+        
+        user_data.clear()
+        await update.message.reply_text(f"✅ Подраздел '{subsection_name}' успешно создан!")
+        
+        # Показываем главное меню
+        keyboard = [
+            [InlineKeyboardButton("📚 Просмотреть разделы", callback_data='view_sections')],
+            [InlineKeyboardButton("➕ Создать раздел", callback_data='create_section')],
+            [InlineKeyboardButton("📁 Создать подраздел", callback_data='create_subsection_choose_section')],
+            [InlineKeyboardButton("📝 Добавить запись", callback_data='add_post_choose_section')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text('🏰 Главное меню:', reply_markup=reply_markup)
+    
+    else:
+        await update.message.reply_text("✅ Бот работает! Используйте /start для меню.")
 
 # Основная функция запуска
 def main():
@@ -251,18 +322,23 @@ def main():
     # Создаем приложение
     application = Application.builder().token(TOKEN).build()
     
-    # Базовые обработчики для теста
+    # Обработчики команд
     application.add_handler(CommandHandler("start", start))
+    
+    # Обработчики callback queries
     application.add_handler(CallbackQueryHandler(view_sections, pattern='^view_sections$'))
     application.add_handler(CallbackQueryHandler(view_subsections, pattern='^view_section_'))
+    application.add_handler(CallbackQueryHandler(create_subsection_choose_section, pattern='^create_subsection_choose_section$'))
+    application.add_handler(CallbackQueryHandler(create_subsection, pattern='^create_subsection_'))
     application.add_handler(CallbackQueryHandler(back_to_main, pattern='^back_to_main$'))
+    
+    # Обработчики сообщений
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     print("✅ Бот запущен и готов к работе!")
     
-    # Простой запуск без сложных параметров
+    # Запускаем бота
     application.run_polling()
 
 if __name__ == '__main__':
     main()
-    
