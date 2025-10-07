@@ -750,7 +750,19 @@ async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await show_main_menu_from_query(query)
+import asyncio
 
+async def reset_webhook():
+    """Принудительно сбрасывает webhook чтобы убрать конфликт"""
+    try:
+        from telegram import Bot
+        bot = Bot(TOKEN)
+        await bot.delete_webhook(drop_pending_updates=True)
+        print("✅ Webhook сброшен, pending updates очищены")
+        await bot.close()
+    except Exception as e:
+        print(f"⚠️ Не удалось сбросить webhook: {e}")
+        
 # Основная функция запуска
 def main():
     print("🚀 Запуск улучшенного бота Sons of Garitos...")
@@ -758,6 +770,10 @@ def main():
     if not TOKEN:
         print("❌ ОШИБКА: BOT_TOKEN не установлен!")
         return
+    
+    # Принудительно сбрасываем webhook перед запуском
+    print("🔄 Сброс webhook для устранения конфликта...")
+    asyncio.run(reset_webhook())
     
     init_db()
     
@@ -787,9 +803,42 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     
-    # Запускаем бота
+    # Запускаем бота с улучшенной обработкой ошибок
     print("✅ Улучшенный бот запущен и готов к работе!")
-    application.run_polling()
-
+    
+    # Функция для обработки ошибки Conflict
+    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Обрабатывает ошибки"""
+        if "Conflict" in str(context.error):
+            print("❌ Обнаружен конфликт! Перезапуск бота...")
+            # Останавливаем текущий экземпляр
+            await application.stop()
+            # Ждем немного
+            await asyncio.sleep(5)
+            # Перезапускаем
+            await application.start()
+            await application.updater.start_polling()
+        else:
+            print(f'❌ Ошибка: {context.error}')
+    
+    # Добавляем обработчик ошибок
+    application.add_error_handler(error_handler)
+    
+    try:
+        application.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,  # Важно: очищаем pending updates
+            close_loop=False
+        )
+    except Exception as e:
+        if "Conflict" in str(e):
+            print("🔄 Конфликт обнаружен, перезапуск через 10 секунд...")
+            time.sleep(10)
+            main()  # Рекурсивный перезапуск
+        else:
+            print(f"❌ Критическая ошибка: {e}")
+            raise e
+            
 if __name__ == '__main__':
     main()
+
