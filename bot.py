@@ -1,33 +1,10 @@
-import logging
 import sqlite3
 import os
-import time
-import sys
-import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
-# Настройка логирования
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-
-# Токен бота из переменных окружения
-TOKEN = os.environ.get('BOT_TOKEN')
-
-# Проверка токена при запуске
-if not TOKEN:
-    print("❌ ОШИБКА: BOT_TOKEN не установлен!")
-    print("📝 Убедитесь, что переменная BOT_TOKEN добавлена в Environment Variables в настройках Render")
-    print("🔄 Перезапуск через 10 секунд...")
-    time.sleep(10)
-    sys.exit(1)
-
-print(f"✅ Токен бота получен: {TOKEN[:10]}...")
-
 # Путь к базе данных
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'clan_bot.db')
+DB_PATH = '/home/runner/sons-of-garitos-bot/clan_bot.db'
 
 def get_db_connection():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -104,7 +81,7 @@ def init_db():
     
     conn.commit()
     conn.close()
-    print("✅ База данных инициализирована")
+    print("✅ Database initialized")
 
 # Главное меню
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -140,7 +117,6 @@ async def view_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = []
     for section in sections:
-        # Считаем количество подразделов и записей
         conn = get_db_connection()
         subs_count = conn.execute('SELECT COUNT(*) FROM subsections WHERE section_id = ?', (section[0],)).fetchone()[0]
         posts_count = conn.execute('''
@@ -194,7 +170,6 @@ async def view_subsections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = []
     for subsection in subsections:
-        # Считаем количество записей в подразделе
         conn = get_db_connection()
         posts_count = conn.execute('SELECT COUNT(*) FROM posts WHERE subsection_id = ?', (subsection[0],)).fetchone()[0]
         conn.close()
@@ -247,7 +222,6 @@ async def create_subsection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     section_id = int(query.data.split('_')[-1])
     context.user_data['creating_subsection'] = {'section_id': section_id}
     
-    # Получаем название раздела для сообщения
     conn = get_db_connection()
     section = conn.execute('SELECT name FROM sections WHERE id = ?', (section_id,)).fetchone()
     conn.close()
@@ -280,7 +254,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     
     if user_data.get('awaiting_subsection_name'):
-        # Создание подраздела
         subsection_name = update.message.text
         section_id = user_data['creating_subsection']['section_id']
         
@@ -296,7 +269,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data.clear()
         await update.message.reply_text(f"✅ Подраздел '{subsection_name}' успешно создан!")
         
-        # Показываем главное меню
         keyboard = [
             [InlineKeyboardButton("📚 Просмотреть разделы", callback_data='view_sections')],
             [InlineKeyboardButton("➕ Создать раздел", callback_data='create_section')],
@@ -309,18 +281,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("✅ Бот работает! Используйте /start для меню.")
 
-# Основная функция запуска
-def main():
-    print("🚀 Запуск бота Sons of Garitos...")
-    
-    if not TOKEN:
-        print("❌ ОШИБКА: BOT_TOKEN не установлен!")
-        return
-    
+# Настройка бота
+async def setup_bot(token: str):
     init_db()
     
-    # Создаем приложение
-    application = Application.builder().token(TOKEN).build()
+    application = Application.builder().token(token).build()
     
     # Обработчики команд
     application.add_handler(CommandHandler("start", start))
@@ -335,10 +300,6 @@ def main():
     # Обработчики сообщений
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    print("✅ Бот запущен и готов к работе!")
+    print("✅ Bot setup completed")
+    return application
     
-    # Запускаем бота
-    application.run_polling()
-
-if __name__ == '__main__':
-    main()
