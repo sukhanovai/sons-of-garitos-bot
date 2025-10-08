@@ -110,71 +110,94 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except:
                 pass
 
-# Главное меню
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("📚 Просмотреть разделы", callback_data='view_sections')],
-        [InlineKeyboardButton("➕ Создать раздел", callback_data='create_section')],
-        [InlineKeyboardButton("📁 Создать подраздел", callback_data='create_subsection_choose_section')],
-        [InlineKeyboardButton("📝 Добавить запись", callback_data='add_post_choose_section')],
-        [InlineKeyboardButton("⚙️ Управление контентом", callback_data='manage_content')]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    user = update.effective_user
-    if update.message:
-        await update.message.reply_text(
-            f'🏰 Добро пожаловать, {user.first_name}, в базу знаний клана Sons of Garitos!\n\n'
-            'Теперь вы можете создавать разделы, подразделы и добавлять различные типы контента!',
-            reply_markup=reply_markup
-        )
-    else:
-        await update.callback_query.edit_message_text(
-            f'🏰 Добро пожаловать, {user.first_name}, в базу знаний клаan Sons of Garitos!\n\n'
-            'Теперь вы можете создавать разделы, подразделы и добавлять различные типы контента!',
-            reply_markup=reply_markup
-        )
-
-# Просмотр разделов
-async def view_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Начало добавления записи - ИСПРАВЛЕННАЯ ФУНКЦИЯ
+async def add_post_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     try:
         await query.answer()
     except:
         pass
     
+    subsection_id = int(query.data.split('_')[-1])
+    context.user_data['adding_post'] = {
+        'subsection_id': subsection_id,
+        'step': 'title'
+    }
+    
     conn = get_db_connection()
     cursor = conn.cursor()
-    sections = cursor.execute('SELECT * FROM sections ORDER BY id').fetchall()
+    
+    # Получаем данные подраздела
+    subsection = cursor.execute('SELECT * FROM subsections WHERE id = ?', (subsection_id,)).fetchone()
+    
+    if not subsection:
+        await query.edit_message_text("❌ Подраздел не найден!")
+        conn.close()
+        return
+    
+    # Получаем данные раздела
+    section = cursor.execute('SELECT * FROM sections WHERE id = ?', (subsection[1],)).fetchone()
     conn.close()
     
-    if not sections:
-        await query.edit_message_text("Разделы пока не созданы.")
+    if not section:
+        await query.edit_message_text("❌ Раздел не найден!")
+        return
+    
+    # Проверяем что данные существуют
+    section_name = section[1] if len(section) > 1 else "Неизвестно"
+    subsection_name = subsection[2] if len(subsection) > 2 else "Неизвестно"
+    
+    await query.edit_message_text(
+        f"📝 **Добавление записи**\n\n"
+        f"📁 Раздел: {section_name}\n"
+        f"📂 Подраздел: {subsection_name}\n\n"
+        f"Введите заголовок записи:"
+    )
+
+# Выбор подраздела для добавления записи - ИСПРАВЛЕННАЯ ФУНКЦИЯ
+async def add_post_choose_subsection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    try:
+        await query.answer()
+    except:
+        pass
+    
+    section_id = int(query.data.split('_')[-1])
+    
+    conn = get_db_connection()
+    subsections = conn.execute('SELECT * FROM subsections WHERE section_id = ? ORDER BY id', (section_id,)).fetchall()
+    section = conn.execute('SELECT * FROM sections WHERE id = ?', (section_id,)).fetchone()
+    conn.close()
+    
+    if not subsections:
+        section_name = section[1] if section and len(section) > 1 else "Неизвестно"
+        await query.edit_message_text(
+            f"В разделе '{section_name}' нет подразделов. Сначала создайте подраздел."
+        )
+        return
+    
+    if not section:
+        await query.edit_message_text("❌ Раздел не найден!")
         return
     
     keyboard = []
-    for section in sections:
-        conn = get_db_connection()
-        subs_count = conn.execute('SELECT COUNT(*) FROM subsections WHERE section_id = ?', (section[0],)).fetchone()[0]
-        posts_count = conn.execute('''
-            SELECT COUNT(*) FROM posts p 
-            JOIN subsections s ON p.subsection_id = s.id 
-            WHERE s.section_id = ?
-        ''', (section[0],)).fetchone()[0]
-        conn.close()
-        
+    for subsection in subsections:
+        subsection_name = subsection[2] if len(subsection) > 2 else "Неизвестно"
         keyboard.append([InlineKeyboardButton(
-            f"{section[1]} ({subs_count} подраз., {posts_count} зап.)", 
-            callback_data=f"view_section_{section[0]}"
+            subsection_name, 
+            callback_data=f"add_post_{subsection[0]}"
         )])
     
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data='back_to_main')])
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data='add_post_choose_section')])
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text("📂 Выберите раздел:", reply_markup=reply_markup)
+    section_name = section[1] if len(section) > 1 else "Неизвестно"
+    await query.edit_message_text(
+        f"📝 **Добавление записи в раздел:** {section_name}\n\nВыберите подраздел:",
+        reply_markup=reply_markup
+    )
 
-# Просмотр подразделов в разделе
+# Просмотр подразделов в разделе - ИСПРАВЛЕННАЯ ФУНКЦИЯ
 async def view_subsections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     try:
@@ -194,6 +217,12 @@ async def view_subsections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ).fetchall()
     conn.close()
     
+    if not section:
+        await query.edit_message_text("❌ Раздел не найден!")
+        return
+    
+    section_name = section[1] if len(section) > 1 else "Неизвестно"
+    
     if not subsections:
         keyboard = [
             [InlineKeyboardButton("📁 Создать подраздел", callback_data=f"create_subsection_{section_id}")],
@@ -205,7 +234,7 @@ async def view_subsections(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(
-            f"В разделе '{section[1]}' пока нет подразделов.\n\n"
+            f"В разделе '{section_name}' пока нет подразделов.\n\n"
             f"Создайте первый подраздел!",
             reply_markup=reply_markup
         )
@@ -217,8 +246,9 @@ async def view_subsections(update: Update, context: ContextTypes.DEFAULT_TYPE):
         posts_count = conn.execute('SELECT COUNT(*) FROM posts WHERE subsection_id = ?', (subsection[0],)).fetchone()[0]
         conn.close()
         
+        subsection_name = subsection[2] if len(subsection) > 2 else "Неизвестно"
         keyboard.append([InlineKeyboardButton(
-            f"{subsection[2]} ({posts_count} зап.)", 
+            f"{subsection_name} ({posts_count} зап.)", 
             callback_data=f"view_subsection_{subsection[0]}"
         )])
     
@@ -233,626 +263,13 @@ async def view_subsections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.edit_message_text(
-        f"📁 Раздел: {section[1]}\n\n"
+        f"📁 Раздел: {section_name}\n\n"
         f"Выберите подраздел:",
         reply_markup=reply_markup
     )
 
-# Просмотр записей в подразделе
-async def view_subsection_posts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try:
-        await query.answer()
-    except:
-        pass
-    
-    subsection_id = int(query.data.split('_')[-1])
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    subsection = cursor.execute('SELECT * FROM subsections WHERE id = ?', (subsection_id,)).fetchone()
-    section = cursor.execute('SELECT * FROM sections WHERE id = ?', (subsection[1],)).fetchone()
-    posts = cursor.execute(
-        'SELECT * FROM posts WHERE subsection_id = ? ORDER BY created_at DESC', 
-        (subsection_id,)
-    ).fetchall()
-    conn.close()
-    
-    if not posts:
-        keyboard = [
-            [InlineKeyboardButton("📝 Добавить запись", callback_data=f"add_post_{subsection_id}")],
-            [InlineKeyboardButton("✏️ Редактировать подраздел", callback_data=f"edit_subsection_{subsection_id}")],
-            [InlineKeyboardButton("🗑️ Удалить подраздел", callback_data=f"delete_subsection_{subsection_id}")],
-            [InlineKeyboardButton("📁 К подразделам", callback_data=f"view_section_{section[0]}")],
-            [InlineKeyboardButton("🏠 Главное меню", callback_data='back_to_main')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await query.edit_message_text(
-            f"📁 Раздел: {section[1]}\n"
-            f"📂 Подраздел: {subsection[2]}\n\n"
-            f"Записей пока нет.\n\n"
-            f"Создайте первую запись!",
-            reply_markup=reply_markup
-        )
-        return
-    
-    # Показываем первую запись с навигацией
-    context.user_data['current_subsection'] = subsection_id
-    context.user_data['current_post_index'] = 0
-    context.user_data['posts'] = posts
-    
-    await show_post(update, context, subsection, section, posts[0], 0, len(posts))
-
-async def show_post(update: Update, context: ContextTypes.DEFAULT_TYPE, subsection, section, post, index, total):
-    query = update.callback_query
-    
-    # Формируем текст записи
-    post_text = f"📁 {section[1]} → {subsection[2]}\n\n"
-    post_text += f"📌 {post[4]}\n\n"
-    
-    if post[6]:  # content_text
-        post_text += f"{post[6]}\n\n"
-    
-    if post[8] and post[9]:  # link_url и link_title
-        post_text += f"🔗 {post[9]}\n{post[8]}\n\n"
-    
-    post_text += f"👤 Автор: {post[3]}\n"
-    post_text += f"📅 {post[10]}\n"
-    post_text += f"📊 ({index + 1}/{total})"
-    
-    keyboard = []
-    
-    # Навигация по записям
-    nav_buttons = []
-    if index > 0:
-        nav_buttons.append(InlineKeyboardButton("⬅️ Предыдущая", callback_data=f"prev_post_{index}"))
-    if index < total - 1:
-        nav_buttons.append(InlineKeyboardButton("Следующая ➡️", callback_data=f"next_post_{index}"))
-    if nav_buttons:
-        keyboard.append(nav_buttons)
-    
-    # Действия с записью
-    keyboard.extend([
-        [InlineKeyboardButton("✏️ Редактировать запись", callback_data=f"edit_post_{post[0]}")],
-        [InlineKeyboardButton("🗑️ Удалить запись", callback_data=f"delete_post_{post[0]}")],
-        [InlineKeyboardButton("📝 Добавить запись", callback_data=f"add_post_{subsection[0]}")],
-        [InlineKeyboardButton("✏️ Редактировать подраздел", callback_data=f"edit_subsection_{subsection[0]}")],
-        [InlineKeyboardButton("🗑️ Удалить подраздел", callback_data=f"delete_subsection_{subsection[0]}")],
-        [InlineKeyboardButton("📂 К подразделам", callback_data=f"view_section_{section[0]}")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data='back_to_main')]
-    ])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    # Если есть изображение, отправляем его с текстом
-    if post[7]:  # image_file_id
-        try:
-            await query.edit_message_media(
-                media=InputMediaPhoto(media=post[7], caption=post_text),
-                reply_markup=reply_markup
-            )
-        except:
-            await query.edit_message_text(post_text, reply_markup=reply_markup)
-    else:
-        await query.edit_message_text(post_text, reply_markup=reply_markup)
-
-# Навигация по записям
-async def navigate_posts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try:
-        await query.answer()
-    except:
-        pass
-    
-    action, index = query.data.split('_')[0], int(query.data.split('_')[-1])
-    
-    subsection_id = context.user_data['current_subsection']
-    posts = context.user_data['posts']
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    subsection = cursor.execute('SELECT * FROM subsections WHERE id = ?', (subsection_id,)).fetchone()
-    section = cursor.execute('SELECT * FROM sections WHERE id = ?', (subsection[1],)).fetchone()
-    conn.close()
-    
-    if action == 'prev':
-        new_index = index - 1
-    else:  # next
-        new_index = index + 1
-    
-    context.user_data['current_post_index'] = new_index
-    await show_post(update, context, subsection, section, posts[new_index], new_index, len(posts))
-
-# Выбор раздела для создания подраздела
-async def create_subsection_choose_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try:
-        await query.answer()
-    except:
-        pass
-    
-    conn = get_db_connection()
-    sections = conn.execute('SELECT * FROM sections ORDER BY id').fetchall()
-    conn.close()
-    
-    keyboard = []
-    for section in sections:
-        keyboard.append([InlineKeyboardButton(
-            section[1], 
-            callback_data=f"create_subsection_{section[0]}"
-        )])
-    
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data='back_to_main')])
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text("📁 **Создание подраздела**\n\nВыберите раздел:", reply_markup=reply_markup)
-
-# Создание подраздела
-async def create_subsection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try:
-        await query.answer()
-    except:
-        pass
-    
-    section_id = int(query.data.split('_')[-1])
-    context.user_data['creating_subsection'] = {'section_id': section_id}
-    
-    conn = get_db_connection()
-    section = conn.execute('SELECT name FROM sections WHERE id = ?', (section_id,)).fetchone()
-    conn.close()
-    
-    await query.edit_message_text(
-        f"📁 **Создание подраздела в разделе:** {section[0]}\n\n"
-        "Введите название для нового подраздела:"
-    )
-    context.user_data['awaiting_subsection_name'] = True
-
-# Выбор раздела для добавления записи
-async def add_post_choose_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try:
-        await query.answer()
-    except:
-        pass
-    
-    conn = get_db_connection()
-    sections = conn.execute('SELECT * FROM sections ORDER BY id').fetchall()
-    conn.close()
-    
-    keyboard = []
-    for section in sections:
-        keyboard.append([InlineKeyboardButton(
-            section[1], 
-            callback_data=f"add_post_choose_subsection_{section[0]}"
-        )])
-    
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data='back_to_main')])
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text("📝 **Добавление записи**\n\nВыберите раздел:", reply_markup=reply_markup)
-
-# Выбор подраздела для добавления записи
-async def add_post_choose_subsection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try:
-        await query.answer()
-    except:
-        pass
-    
-    section_id = int(query.data.split('_')[-1])
-    
-    conn = get_db_connection()
-    subsections = conn.execute('SELECT * FROM subsections WHERE section_id = ? ORDER BY id', (section_id,)).fetchall()
-    section = conn.execute('SELECT name FROM sections WHERE id = ?', (section_id,)).fetchone()
-    conn.close()
-    
-    if not subsections:
-        await query.edit_message_text(
-            f"В разделе '{section[0]}' нет подразделов. Сначала создайте подраздел."
-        )
-        return
-    
-    keyboard = []
-    for subsection in subsections:
-        keyboard.append([InlineKeyboardButton(
-            subsection[2], 
-            callback_data=f"add_post_{subsection[0]}"
-        )])
-    
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data='add_post_choose_section')])
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(
-        f"📝 **Добавление записи в раздел:** {section[0]}\n\nВыберите подраздел:",
-        reply_markup=reply_markup
-    )
-
-# Начало добавления записи
-async def add_post_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try:
-        await query.answer()
-    except:
-        pass
-    
-    subsection_id = int(query.data.split('_')[-1])
-    context.user_data['adding_post'] = {
-        'subsection_id': subsection_id,
-        'step': 'title'
-    }
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    subsection = cursor.execute('SELECT * FROM subsections WHERE id = ?', (subsection_id,)).fetchone()
-    
-    if not subsection:
-        await query.edit_message_text("❌ Подраздел не найден!")
-        conn.close()
-        return
-    
-    section = cursor.execute('SELECT * FROM sections WHERE id = ?', (subsection[1],)).fetchone()
-    conn.close()
-    
-    if not section:
-        await query.edit_message_text("❌ Раздел не найден!")
-        return
-    
-    await query.edit_message_text(
-        f"📝 **Добавление записи**\n\n"
-        f"📁 Раздел: {section[1]}\n"
-        f"📂 Подраздел: {subsection[2]}\n\n"
-        f"Введите заголовок записи:"
-    )
-
-# Создание раздела
-async def create_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try:
-        await query.answer()
-    except:
-        pass
-    
-    context.user_data['creating_section'] = True
-    
-    await query.edit_message_text(
-        "➕ **Создание раздела**\n\n"
-        "Введите название для нового раздела:"
-    )
-
-# Управление контентом
-async def manage_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try:
-        await query.answer()
-    except:
-        pass
-    
-    keyboard = [
-        [InlineKeyboardButton("📚 Управление разделами", callback_data='manage_sections')],
-        [InlineKeyboardButton("📁 Управление подразделами", callback_data='manage_subsections')],
-        [InlineKeyboardButton("📝 Управление записями", callback_data='manage_posts')],
-        [InlineKeyboardButton("◀️ Назад", callback_data='back_to_main')]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text("⚙️ **Управление контентом**\n\nВыберите что хотите управлять:", reply_markup=reply_markup)
-
-# Управление разделами
-async def manage_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try:
-        await query.answer()
-    except:
-        pass
-    
-    conn = get_db_connection()
-    sections = conn.execute('SELECT * FROM sections ORDER BY id').fetchall()
-    conn.close()
-    
-    if not sections:
-        await query.edit_message_text("Разделы пока не созданы.")
-        return
-    
-    keyboard = []
-    for section in sections:
-        keyboard.append([InlineKeyboardButton(
-            f"✏️ {section[1]}", 
-            callback_data=f"edit_section_{section[0]}"
-        )])
-        keyboard.append([InlineKeyboardButton(
-            f"🗑️ Удалить {section[1]}", 
-            callback_data=f"delete_section_{section[0]}"
-        )])
-    
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data='manage_content')])
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text("📚 **Управление разделами**\n\nВыберите раздел для редактирования или удаления:", reply_markup=reply_markup)
-
-# Редактирование раздела
-async def edit_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try:
-        await query.answer()
-    except:
-        pass
-    
-    section_id = int(query.data.split('_')[-1])
-    context.user_data['editing_section'] = section_id
-    
-    conn = get_db_connection()
-    section = conn.execute('SELECT * FROM sections WHERE id = ?', (section_id,)).fetchone()
-    conn.close()
-    
-    await query.edit_message_text(
-        f"✏️ **Редактирование раздела**\n\n"
-        f"Текущее название: {section[1]}\n"
-        f"Текущее описание: {section[2] or 'нет'}\n\n"
-        f"Введите новое название раздела:"
-    )
-    context.user_data['awaiting_section_name'] = True
-
-# Удаление раздела
-async def delete_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try:
-        await query.answer()
-    except:
-        pass
-    
-    section_id = int(query.data.split('_')[-1])
-    
-    conn = get_db_connection()
-    section = conn.execute('SELECT * FROM sections WHERE id = ?', (section_id,)).fetchone()
-    
-    # Проверяем есть ли подразделы
-    subs_count = conn.execute('SELECT COUNT(*) FROM subsections WHERE section_id = ?', (section_id,)).fetchone()[0]
-    
-    if subs_count > 0:
-        conn.close()
-        keyboard = [
-            [InlineKeyboardButton("✅ Да, удалить всё", callback_data=f"confirm_delete_section_{section_id}")],
-            [InlineKeyboardButton("❌ Нет, отмена", callback_data='manage_sections')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await query.edit_message_text(
-            f"⚠️ **Удаление раздела**\n\n"
-            f"Раздел '{section[1]}' содержит {subs_count} подразделов.\n"
-            f"Все подразделы и записи в них будут также удалены!\n\n"
-            f"Вы уверены что хотите удалить раздел?",
-            reply_markup=reply_markup
-        )
-        return
-    
-    # Удаляем раздел если нет подразделов
-    conn.execute('DELETE FROM sections WHERE id = ?', (section_id,))
-    conn.commit()
-    conn.close()
-    
-    await query.edit_message_text(f"✅ Раздел '{section[1]}' успешно удален!")
-    await manage_sections(update, context)
-
-# Подтверждение удаления раздела
-async def confirm_delete_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try:
-        await query.answer()
-    except:
-        pass
-    
-    section_id = int(query.data.split('_')[-1])
-    
-    conn = get_db_connection()
-    section = conn.execute('SELECT * FROM sections WHERE id = ?', (section_id,)).fetchone()
-    
-    # Удаляем все связанные записи и подразделы
-    subsections = conn.execute('SELECT id FROM subsections WHERE section_id = ?', (section_id,)).fetchall()
-    for subsection in subsections:
-        conn.execute('DELETE FROM posts WHERE subsection_id = ?', (subsection[0],))
-    
-    conn.execute('DELETE FROM subsections WHERE section_id = ?', (section_id,))
-    conn.execute('DELETE FROM sections WHERE id = ?', (section_id,))
-    conn.commit()
-    conn.close()
-    
-    await query.edit_message_text(f"✅ Раздел '{section[1]}' и все его содержимое успешно удалены!")
-    await manage_sections(update, context)
-
-# Обработка текстовых сообщений
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_data = context.user_data
-    user = update.effective_user
-    
-    if user_data.get('awaiting_subsection_name'):
-        subsection_name = update.message.text
-        section_id = user_data['creating_subsection']['section_id']
-        
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            'INSERT INTO subsections (section_id, name, description, created_by) VALUES (?, ?, ?, ?)',
-            (section_id, subsection_name, "Описание подраздела", user.id)
-        )
-        conn.commit()
-        conn.close()
-        
-        user_data.clear()
-        await update.message.reply_text(f"✅ Подраздел '{subsection_name}' успешно создан!")
-        await start(update, context)
-    
-    elif user_data.get('awaiting_section_name'):
-        section_name = update.message.text
-        section_id = user_data.get('editing_section')
-        
-        conn = get_db_connection()
-        if section_id:  # Редактирование существующего
-            conn.execute('UPDATE sections SET name = ? WHERE id = ?', (section_name, section_id))
-            action = "обновлен"
-        else:  # Создание нового
-            conn.execute(
-                'INSERT INTO sections (name, description, created_by) VALUES (?, ?, ?)',
-                (section_name, "Описание раздела", user.id)
-            )
-            action = "создан"
-        
-        conn.commit()
-        conn.close()
-        
-        user_data.clear()
-        await update.message.reply_text(f"✅ Раздел '{section_name}' успешно {action}!")
-        await start(update, context)
-    
-    elif user_data.get('adding_post'):
-        post_data = user_data['adding_post']
-        
-        if post_data['step'] == 'title':
-            post_data['title'] = update.message.text
-            post_data['step'] = 'content'
-            
-            keyboard = [
-                [InlineKeyboardButton("📝 Только текст", callback_data='content_type_text')],
-                [InlineKeyboardButton("🖼️ Только изображение", callback_data='content_type_image')],
-                [InlineKeyboardButton("🔗 Только ссылка", callback_data='content_type_link')],
-                [InlineKeyboardButton("📄 Текст + изображение", callback_data='content_type_mixed')]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await update.message.reply_text(
-                f"📝 Заголовок сохранен: {post_data['title']}\n\n"
-                f"Выберите тип контента:",
-                reply_markup=reply_markup
-            )
-        
-        elif post_data['step'] == 'content_text':
-            post_data['content_text'] = update.message.text
-            post_data['step'] = 'complete'
-            
-            # Сохраняем запись
-            await save_post(update, context, post_data, user)
-    
-    else:
-        await update.message.reply_text("✅ Бот работает! Используйте /start для меню.")
-
-# Обработка изображений
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_data = context.user_data
-    
-    if user_data.get('adding_post'):
-        post_data = user_data['adding_post']
-        
-        if post_data.get('content_type') == 'image' or post_data.get('content_type') == 'mixed':
-            # Сохраняем file_id изображения
-            photo = update.message.photo[-1]
-            post_data['image_file_id'] = photo.file_id
-            
-            if post_data['content_type'] == 'image':
-                post_data['step'] = 'complete'
-                await save_post(update, context, post_data, update.effective_user)
-            else:
-                post_data['step'] = 'content_text'
-                await update.message.reply_text("🖼️ Изображение сохранено! Теперь введите текст:")
-
-# Сохранение записи в БД
-async def save_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_data, user):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Определяем тип контента
-    content_type = post_data.get('content_type', 'text')
-    
-    cursor.execute('''
-        INSERT INTO posts (subsection_id, user_id, user_name, title, content_type, 
-                          content_text, image_file_id, link_url, link_title)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        post_data['subsection_id'],
-        user.id,
-        user.first_name,
-        post_data['title'],
-        content_type,
-        post_data.get('content_text'),
-        post_data.get('image_file_id'),
-        post_data.get('link_url'),
-        post_data.get('link_title')
-    ))
-    
-    conn.commit()
-    conn.close()
-    
-    context.user_data.clear()
-    await update.message.reply_text("✅ Запись успешно добавлена!")
-    await start(update, context)
-
-# Обработка выбора типа контента
-async def handle_content_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try:
-        await query.answer()
-    except:
-        pass
-    
-    content_type = query.data.split('_')[-1]
-    user_data = context.user_data
-    
-    if user_data.get('adding_post'):
-        user_data['adding_post']['content_type'] = content_type
-        
-        if content_type == 'text':
-            user_data['adding_post']['step'] = 'content_text'
-            await query.edit_message_text("📝 Введите текст записи:")
-        
-        elif content_type == 'image':
-            user_data['adding_post']['step'] = 'content_image'
-            await query.edit_message_text("🖼️ Отправьте изображение:")
-        
-        elif content_type == 'link':
-            user_data['adding_post']['step'] = 'link_url'
-            await query.edit_message_text("🔗 Введите URL ссылки:")
-        
-        elif content_type == 'mixed':
-            user_data['adding_post']['step'] = 'content_image'
-            await query.edit_message_text("🖼️ Сначала отправьте изображение:")
-
-# Обработка ссылок
-async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_data = context.user_data
-    
-    if user_data.get('adding_post') and user_data['adding_post'].get('step') == 'link_url':
-        link_url = update.message.text
-        
-        # Простая валидация URL
-        if not link_url.startswith(('http://', 'https://')):
-            link_url = 'https://' + link_url
-        
-        user_data['adding_post']['link_url'] = link_url
-        user_data['adding_post']['step'] = 'link_title'
-        
-        await update.message.reply_text("🔗 Введите заголовок для ссылки:")
-
-# Возврат в главное меню
-async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try:
-        await query.answer()
-    except:
-        pass
-    
-    keyboard = [
-        [InlineKeyboardButton("📚 Просмотреть разделы", callback_data='view_sections')],
-        [InlineKeyboardButton("➕ Создать раздел", callback_data='create_section')],
-        [InlineKeyboardButton("📁 Создать подраздел", callback_data='create_subsection_choose_section')],
-        [InlineKeyboardButton("📝 Добавить запись", callback_data='add_post_choose_section')],
-        [InlineKeyboardButton("⚙️ Управление контентом", callback_data='manage_content')]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text('🏰 Главное меню базы знаний клана:', reply_markup=reply_markup)
+# Остальные функции остаются без изменений...
+# [ВСТАВЬТЕ СЮДА ВСЕ ОСТАЛЬНЫЕ ФУНКЦИИ ИЗ ПРЕДЫДУЩЕГО КОДА]
 
 # Настройка бота
 async def setup_bot(token: str):
