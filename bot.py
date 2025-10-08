@@ -88,6 +88,28 @@ def init_db():
         print(f"❌ Database initialization error: {e}")
         raise
 
+# Обработчик ошибок
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик ошибок"""
+    try:
+        raise context.error
+    except Exception as e:
+        error_msg = str(e)
+        print(f"⚠️ Error handled: {error_msg}")
+        
+        # Игнорируем ошибки устаревших callback queries
+        if "Query is too old" in error_msg or "query id is invalid" in error_msg:
+            return
+        
+        # Для других ошибок можно отправить сообщение пользователю
+        if update and update.effective_message:
+            try:
+                await update.effective_message.reply_text(
+                    "❌ Произошла ошибка. Попробуйте снова."
+                )
+            except:
+                pass
+
 # Главное меню
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -109,7 +131,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await update.callback_query.edit_message_text(
-            f'🏰 Добро пожаловать, {user.first_name}, в базу знаний клана Sons of Garitos!\n\n'
+            f'🏰 Добро пожаловать, {user.first_name}, в базу знаний клаan Sons of Garitos!\n\n'
             'Теперь вы можете создавать разделы, подразделы и добавлять различные типы контента!',
             reply_markup=reply_markup
         )
@@ -117,7 +139,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Просмотр разделов
 async def view_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except:
+        pass
     
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -152,7 +177,10 @@ async def view_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Просмотр подразделов в разделе
 async def view_subsections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except:
+        pass
     
     section_id = int(query.data.split('_')[-1])
     
@@ -213,7 +241,10 @@ async def view_subsections(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Просмотр записей в подразделе
 async def view_subsection_posts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except:
+        pass
     
     subsection_id = int(query.data.split('_')[-1])
     
@@ -310,7 +341,10 @@ async def show_post(update: Update, context: ContextTypes.DEFAULT_TYPE, subsecti
 # Навигация по записям
 async def navigate_posts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except:
+        pass
     
     action, index = query.data.split('_')[0], int(query.data.split('_')[-1])
     
@@ -334,7 +368,10 @@ async def navigate_posts(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Выбор раздела для создания подраздела
 async def create_subsection_choose_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except:
+        pass
     
     conn = get_db_connection()
     sections = conn.execute('SELECT * FROM sections ORDER BY id').fetchall()
@@ -355,7 +392,10 @@ async def create_subsection_choose_section(update: Update, context: ContextTypes
 # Создание подраздела
 async def create_subsection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except:
+        pass
     
     section_id = int(query.data.split('_')[-1])
     context.user_data['creating_subsection'] = {'section_id': section_id}
@@ -373,7 +413,10 @@ async def create_subsection(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Выбор раздела для добавления записи
 async def add_post_choose_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except:
+        pass
     
     conn = get_db_connection()
     sections = conn.execute('SELECT * FROM sections ORDER BY id').fetchall()
@@ -394,7 +437,10 @@ async def add_post_choose_section(update: Update, context: ContextTypes.DEFAULT_
 # Выбор подраздела для добавления записи
 async def add_post_choose_subsection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except:
+        pass
     
     section_id = int(query.data.split('_')[-1])
     
@@ -427,7 +473,10 @@ async def add_post_choose_subsection(update: Update, context: ContextTypes.DEFAU
 # Начало добавления записи
 async def add_post_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except:
+        pass
     
     subsection_id = int(query.data.split('_')[-1])
     context.user_data['adding_post'] = {
@@ -436,9 +485,20 @@ async def add_post_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     
     conn = get_db_connection()
-    subsection = conn.execute('SELECT * FROM subsections WHERE id = ?', (subsection_id,)).fetchone()
-    section = conn.execute('SELECT name FROM sections WHERE id = ?', (subsection[1],)).fetchone()
+    cursor = conn.cursor()
+    subsection = cursor.execute('SELECT * FROM subsections WHERE id = ?', (subsection_id,)).fetchone()
+    
+    if not subsection:
+        await query.edit_message_text("❌ Подраздел не найден!")
+        conn.close()
+        return
+    
+    section = cursor.execute('SELECT * FROM sections WHERE id = ?', (subsection[1],)).fetchone()
     conn.close()
+    
+    if not section:
+        await query.edit_message_text("❌ Раздел не найден!")
+        return
     
     await query.edit_message_text(
         f"📝 **Добавление записи**\n\n"
@@ -450,7 +510,10 @@ async def add_post_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Создание раздела
 async def create_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except:
+        pass
     
     context.user_data['creating_section'] = True
     
@@ -462,7 +525,10 @@ async def create_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Управление контентом
 async def manage_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except:
+        pass
     
     keyboard = [
         [InlineKeyboardButton("📚 Управление разделами", callback_data='manage_sections')],
@@ -478,7 +544,10 @@ async def manage_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Управление разделами
 async def manage_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except:
+        pass
     
     conn = get_db_connection()
     sections = conn.execute('SELECT * FROM sections ORDER BY id').fetchall()
@@ -507,7 +576,10 @@ async def manage_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Редактирование раздела
 async def edit_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except:
+        pass
     
     section_id = int(query.data.split('_')[-1])
     context.user_data['editing_section'] = section_id
@@ -527,7 +599,10 @@ async def edit_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Удаление раздела
 async def delete_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except:
+        pass
     
     section_id = int(query.data.split('_')[-1])
     
@@ -565,7 +640,10 @@ async def delete_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Подтверждение удаления раздела
 async def confirm_delete_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except:
+        pass
     
     section_id = int(query.data.split('_')[-1])
     
@@ -713,7 +791,10 @@ async def save_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_dat
 # Обработка выбора типа контента
 async def handle_content_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except:
+        pass
     
     content_type = query.data.split('_')[-1]
     user_data = context.user_data
@@ -756,7 +837,10 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Возврат в главное меню
 async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except:
+        pass
     
     keyboard = [
         [InlineKeyboardButton("📚 Просмотреть разделы", callback_data='view_sections')],
@@ -775,6 +859,9 @@ async def setup_bot(token: str):
     init_db()
     
     application = Application.builder().token(token).build()
+    
+    # Добавляем обработчик ошибок
+    application.add_error_handler(error_handler)
     
     # Обработчики команд
     application.add_handler(CommandHandler("start", start))
@@ -805,4 +892,3 @@ async def setup_bot(token: str):
     print("✅ Bot setup completed")
     return application
     
-
