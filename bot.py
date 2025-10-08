@@ -3,85 +3,90 @@ import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
-# Путь к базе данных
-DB_PATH = '/home/runner/sons-of-garitos-bot/clan_bot.db'
+# Путь к базе данных - исправленный для Replit
+DB_PATH = os.path.join(os.getcwd(), 'clan_bot.db')
 
 def get_db_connection():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
 
 def init_db():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Таблица разделов
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS sections (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            description TEXT,
-            created_by INTEGER,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Таблица подразделов
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS subsections (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            section_id INTEGER,
-            name TEXT NOT NULL,
-            description TEXT,
-            created_by INTEGER,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (section_id) REFERENCES sections (id)
-        )
-    ''')
-    
-    # Таблица записей
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS posts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            subsection_id INTEGER,
-            user_id INTEGER,
-            user_name TEXT,
-            title TEXT NOT NULL,
-            content_type TEXT CHECK(content_type IN ('text', 'image', 'link', 'mixed')),
-            content_text TEXT,
-            image_file_id TEXT,
-            link_url TEXT,
-            link_title TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (subsection_id) REFERENCES subsections (id)
-        )
-    ''')
-    
-    # Создаем базовые разделы
-    cursor.execute('''
-        INSERT OR IGNORE INTO sections (id, name, description) 
-        VALUES 
-            (1, '📚 Гайды по игре', 'Полезные гайды и стратегии'),
-            (2, '⚔️ Библиотека сборок', 'Эффективные сборки персонажей'),
-            (3, '📝 Заметки клана', 'Важные объявления и заметки'),
-            (4, '🔗 Полезные ссылки', 'Ссылки на ресурсы и инструменты')
-    ''')
-    
-    # Создаем базовые подразделы
-    cursor.execute('''
-        INSERT OR IGNORE INTO subsections (id, section_id, name, description) 
-        VALUES 
-            (1, 1, '🎯 Основы игры', 'Базовые гайды для новичков'),
-            (2, 1, '🏆 Продвинутые стратегии', 'Стратегии для опытных игроков'),
-            (3, 2, '⚔️ PvP сборки', 'Сборки для арены'),
-            (4, 2, '🐉 PvE сборки', 'Сборки для против боссов'),
-            (5, 3, '📢 Объявления', 'Важные объявления клана'),
-            (6, 3, '💡 Идеи и предложения', 'Предложения по развитию клана'),
-            (7, 4, '🌐 Официальные ресурсы', 'Официальные сайты и соцсети'),
-            (8, 4, '🛠️ Калькуляторы и инструменты', 'Полезные инструменты для игры')
-    ''')
-    
-    conn.commit()
-    conn.close()
-    print("✅ Database initialized")
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Таблица разделов
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS sections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_by INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Таблица подразделов
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS subsections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                section_id INTEGER,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_by INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (section_id) REFERENCES sections (id)
+            )
+        ''')
+        
+        # Таблица записей
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subsection_id INTEGER,
+                user_id INTEGER,
+                user_name TEXT,
+                title TEXT NOT NULL,
+                content_type TEXT CHECK(content_type IN ('text', 'image', 'link', 'mixed')),
+                content_text TEXT,
+                image_file_id TEXT,
+                link_url TEXT,
+                link_title TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (subsection_id) REFERENCES subsections (id)
+            )
+        ''')
+        
+        # Создаем базовые разделы
+        cursor.execute('''
+            INSERT OR IGNORE INTO sections (id, name, description) 
+            VALUES 
+                (1, '📚 Гайды по игре', 'Полезные гайды и стратегии'),
+                (2, '⚔️ Библиотека сборок', 'Эффективные сборки персонажей'),
+                (3, '📝 Заметки клана', 'Важные объявления и заметки'),
+                (4, '🔗 Полезные ссылки', 'Ссылки на ресурсы и инструменты')
+        ''')
+        
+        # Создаем базовые подразделы
+        cursor.execute('''
+            INSERT OR IGNORE INTO subsections (id, section_id, name, description) 
+            VALUES 
+                (1, 1, '🎯 Основы игры', 'Базовые гайды для новичков'),
+                (2, 1, '🏆 Продвинутые стратегии', 'Стратегии для опытных игроков'),
+                (3, 2, '⚔️ PvP сборки', 'Сборки для арены'),
+                (4, 2, '🐉 PvE сборки', 'Сборки для против боссов'),
+                (5, 3, '📢 Объявления', 'Важные объявления клана'),
+                (6, 3, '💡 Идеи и предложения', 'Предложения по развитию клана'),
+                (7, 4, '🌐 Официальные ресурсы', 'Официальные сайты и соцсети'),
+                (8, 4, '🛠️ Калькуляторы и инструменты', 'Полезные инструменты для игры')
+        ''')
+        
+        conn.commit()
+        conn.close()
+        print(f"✅ Database initialized at: {DB_PATH}")
+        
+    except Exception as e:
+        print(f"❌ Database initialization error: {e}")
+        raise
 
 # Главное меню
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -800,3 +805,4 @@ async def setup_bot(token: str):
     print("✅ Bot setup completed")
     return application
     
+
