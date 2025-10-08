@@ -78,24 +78,18 @@ def delayed_restart():
 
 def keep_alive():
     """Функция для поддержания активности приложения"""
-    time.sleep(10)  # Ждем запуска сервера
+    time.sleep(10)
     
     while True:
         try:
-            # Используем правильный URL для Replit
-            repl_id = os.environ.get('REPL_ID', 'sons-of-garitos-bot')
-            repl_owner = os.environ.get('REPL_OWNER', 'aleksandrisukha')
-            base_url = f"https://{repl_id}.{repl_owner}.repl.co"
-            
-            # Пингуем себя
-            response = requests.get(f"{base_url}/ping", timeout=10)
+            # Пингуем локальный сервер вместо внешнего URL
+            response = requests.get('http://localhost:8080/ping', timeout=5)
             print(f"🔄 Keep-alive ping: {response.status_code}")
             
         except Exception as e:
             print(f"❌ Keep-alive error: {e}")
         
-        # Ждем 5 минут перед следующим пингом
-        time.sleep(300)
+        time.sleep(300)  # 5 минут
 
 def auto_updater():
     """Автоматическая проверка обновлений каждые 30 минут"""
@@ -107,6 +101,7 @@ def auto_updater():
             
             # Проверяем обновления
             result = subprocess.run(['git', 'pull'], capture_output=True, text=True)
+            print(f"🔧 Git pull result: {result.stdout}")
             
             # Если есть обновления, перезапускаем
             if "Already up to date" not in result.stdout:
@@ -117,7 +112,7 @@ def auto_updater():
         except Exception as e:
             print(f"❌ Auto-update error: {e}")
         
-        time.sleep(1800)
+        time.sleep(1800)  # 30 минут
 
 def run_flask():
     """Запуск Flask сервера"""
