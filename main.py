@@ -41,19 +41,9 @@ def github_webhook():
         if request.headers.get('X-GitHub-Event') == 'push':
             print("🔄 GitHub push received, pulling changes and restarting...")
             
-            # Логируем полученные данные
-            data = request.json
-            if data:
-                repo_name = data.get('repository', {}).get('name', 'Unknown')
-                commit_message = data.get('head_commit', {}).get('message', 'No message')
-                print(f"📦 Repository: {repo_name}")
-                print(f"📝 Commit: {commit_message}")
-            
             # Обновляем код
             result = subprocess.run(['git', 'pull'], capture_output=True, text=True)
             print(f"🔧 Git pull result: {result.stdout}")
-            if result.stderr:
-                print(f"❌ Git pull error: {result.stderr}")
             
             # Перезапускаем
             Thread(target=delayed_restart, daemon=True).start()
@@ -92,17 +82,15 @@ def keep_alive():
     
     while True:
         try:
-            # Получаем URL нашего приложения
-            repl_slug = os.environ.get('REPL_SLUG', 'sons-of-garitos-bot')
+            # Используем правильный URL для Replit
+            repl_id = os.environ.get('REPL_ID', 'sons-of-garitos-bot')
             repl_owner = os.environ.get('REPL_OWNER', 'aleksandrisukha')
-            base_url = f"https://{repl_slug}.{repl_owner}.repl.co"
+            base_url = f"https://{repl_id}.{repl_owner}.repl.co"
             
             # Пингуем себя
             response = requests.get(f"{base_url}/ping", timeout=10)
-            print(f"🔄 Keep-alive ping: {response.status_code} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"🔄 Keep-alive ping: {response.status_code}")
             
-        except requests.exceptions.RequestException as e:
-            print(f"❌ Keep-alive request error: {e}")
         except Exception as e:
             print(f"❌ Keep-alive error: {e}")
         
@@ -111,7 +99,7 @@ def keep_alive():
 
 def auto_updater():
     """Автоматическая проверка обновлений каждые 30 минут"""
-    time.sleep(60)  # Ждем 1 минуту после запуска
+    time.sleep(60)
     
     while True:
         try:
@@ -119,7 +107,6 @@ def auto_updater():
             
             # Проверяем обновления
             result = subprocess.run(['git', 'pull'], capture_output=True, text=True)
-            print(f"🔧 Git pull result: {result.stdout}")
             
             # Если есть обновления, перезапускаем
             if "Already up to date" not in result.stdout:
@@ -130,7 +117,6 @@ def auto_updater():
         except Exception as e:
             print(f"❌ Auto-update error: {e}")
         
-        # Ждем 30 минут перед следующей проверкой
         time.sleep(1800)
 
 def run_flask():
@@ -156,13 +142,15 @@ async def main():
     # Даем время серверу запуститься
     time.sleep(3)
     
+    # Получаем токен из переменных окружения
     TOKEN = os.environ.get('BOT_TOKEN')
     
     if not TOKEN:
         print("❌ BOT_TOKEN not found in environment variables!")
+        print("💡 Please add BOT_TOKEN to Replit Secrets")
         return
     
-    print(f"✅ Bot token: {TOKEN[:10]}...")
+    print(f"✅ Bot token found: {TOKEN[:10]}...")
     
     try:
         from bot import setup_bot
@@ -176,7 +164,6 @@ async def main():
         import traceback
         traceback.print_exc()
         
-        # Перезапуск при ошибке через 10 секунд
         print("🔄 Restarting in 10 seconds...")
         time.sleep(10)
         os._exit(1)
