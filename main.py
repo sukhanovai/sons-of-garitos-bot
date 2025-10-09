@@ -5,7 +5,7 @@ import subprocess
 import requests
 from flask import Flask, request, jsonify
 from threading import Thread
-import asyncio
+import multiprocessing
 import sys
 
 # Настройка логирования
@@ -154,14 +154,45 @@ def keep_alive():
         
         time.sleep(300)  # 5 минут
 
+def run_bot():
+    """Запуск бота в отдельном процессе"""
+    import asyncio
+    from bot import setup_bot
+    
+    async def bot_main():
+        TOKEN = os.environ.get('BOT_TOKEN')
+        
+        if not TOKEN:
+            print("❌ BOT_TOKEN not found!")
+            return
+        
+        try:
+            application = await setup_bot(TOKEN)
+            print("✅ Bot process started successfully!")
+            await application.run_polling()
+        except Exception as e:
+            print(f"❌ Bot process error: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # Запускаем бота в отдельной event loop
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(bot_main())
+    except KeyboardInterrupt:
+        print("🛑 Bot process stopped")
+    except Exception as e:
+        print(f"❌ Bot process failed: {e}")
+
 def run_flask():
     """Запуск Flask сервера"""
     port = int(os.environ.get('PORT', 5000))
     print(f"🚀 Starting Flask server on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
 
-# Основной код бота
-async def main_async():
+def main():
+    """Основная функция запуска"""
     # Проверяем обновления при запуске
     updates_applied = check_updates_on_start()
     
@@ -173,49 +204,6 @@ async def main_async():
     # Даем время серверу запуститься
     time.sleep(3)
     
-    # Получаем токен из переменных окружения
-    TOKEN = os.environ.get('BOT_TOKEN')
-    
-    if not TOKEN:
-        print("❌ BOT_TOKEN not found in environment variables!")
-        print("💡 Please add BOT_TOKEN to Replit Secrets")
-        return
-    
-    print(f"✅ Bot token found: {TOKEN[:10]}...")
-    
-    try:
-        from bot import setup_bot
-        application = await setup_bot(TOKEN)
-        
-        print("✅ Bot started successfully!")
-        await application.run_polling()
-        
-    except Exception as e:
-        print(f"❌ Bot error: {e}")
-        import traceback
-        traceback.print_exc()
-        
-        print("🔄 Restarting in 10 seconds...")
-        time.sleep(10)
-        os._exit(1)
-
-def main():
-    """Основная функция запуска"""
-    try:
-        # Создаем новую event loop для Python 3.12
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(main_async())
-    except KeyboardInterrupt:
-        print("🛑 Bot stopped by user")
-    except Exception as e:
-        print(f"❌ Main error: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        print("🔚 Shutting down...")
-
-if __name__ == '__main__':
     # Запускаем Flask в отдельном потоке
     Thread(target=run_flask, daemon=True).start()
     print("✅ Flask server started")
@@ -224,6 +212,32 @@ if __name__ == '__main__':
     Thread(target=keep_alive, daemon=True).start()
     print("✅ Keep-alive started")
     
-    print("🤖 Starting Sons of Garitos Bot...")
+    # Запускаем бота в отдельном процессе
+    print("🤖 Starting Telegram Bot in separate process...")
+    bot_process = multiprocessing.Process(target=run_bot)
+    bot_process.daemon = True
+    bot_process.start()
+    
+    print("✅ All services started successfully!")
+    
+    # Бесконечный цикл для поддержания работы
+    try:
+        while True:
+            time.sleep(1)
+            # Проверяем жив ли процесс бота
+            if not bot_process.is_alive():
+                print("❌ Bot process died, restarting...")
+                bot_process = multiprocessing.Process(target=run_bot)
+                bot_process.daemon = True
+                bot_process.start()
+                print("✅ Bot process restarted")
+                
+    except KeyboardInterrupt:
+        print("🛑 Shutting down...")
+        if bot_process.is_alive():
+            bot_process.terminate()
+        sys.exit(0)
+
+if __name__ == '__main__':
     main()
     
