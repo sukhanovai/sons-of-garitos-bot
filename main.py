@@ -5,7 +5,6 @@ import subprocess
 import requests
 from flask import Flask, request, jsonify
 from threading import Thread
-import multiprocessing
 import sys
 
 # Настройка логирования
@@ -155,35 +154,35 @@ def keep_alive():
         time.sleep(300)  # 5 минут
 
 def run_bot():
-    """Запуск бота в отдельном процессе"""
-    import asyncio
-    from bot import setup_bot
+    """Запуск бота в отдельном потоке"""
+    print("🤖 Starting Telegram Bot...")
     
-    async def bot_main():
-        TOKEN = os.environ.get('BOT_TOKEN')
-        
-        if not TOKEN:
-            print("❌ BOT_TOKEN not found!")
-            return
-        
-        try:
-            application = await setup_bot(TOKEN)
-            print("✅ Bot process started successfully!")
-            await application.run_polling()
-        except Exception as e:
-            print(f"❌ Bot process error: {e}")
-            import traceback
-            traceback.print_exc()
+    TOKEN = os.environ.get('BOT_TOKEN')
     
-    # Запускаем бота в отдельной event loop
+    if not TOKEN:
+        print("❌ BOT_TOKEN not found!")
+        return
+    
     try:
+        # Импортируем и настраиваем бота
+        from bot import setup_bot
+        import asyncio
+        
+        # Создаем новую event loop для этого потока
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(bot_main())
-    except KeyboardInterrupt:
-        print("🛑 Bot process stopped")
+        
+        # Запускаем бота
+        application = loop.run_until_complete(setup_bot(TOKEN))
+        print("✅ Bot started successfully!")
+        
+        # Запускаем polling
+        loop.run_until_complete(application.run_polling())
+        
     except Exception as e:
-        print(f"❌ Bot process failed: {e}")
+        print(f"❌ Bot error: {e}")
+        import traceback
+        traceback.print_exc()
 
 def run_flask():
     """Запуск Flask сервера"""
@@ -201,22 +200,23 @@ def main():
         time.sleep(2)
         os._exit(0)
     
-    # Даем время серверу запуститься
-    time.sleep(3)
-    
     # Запускаем Flask в отдельном потоке
-    Thread(target=run_flask, daemon=True).start()
+    flask_thread = Thread(target=run_flask, daemon=True)
+    flask_thread.start()
     print("✅ Flask server started")
     
     # Запускаем keep-alive в отдельном потоке
-    Thread(target=keep_alive, daemon=True).start()
+    keep_alive_thread = Thread(target=keep_alive, daemon=True)
+    keep_alive_thread.start()
     print("✅ Keep-alive started")
     
-    # Запускаем бота в отдельном процессе
-    print("🤖 Starting Telegram Bot in separate process...")
-    bot_process = multiprocessing.Process(target=run_bot)
-    bot_process.daemon = True
-    bot_process.start()
+    # Даем время Flask запуститься
+    time.sleep(3)
+    
+    # Запускаем бота в отдельном потоке
+    bot_thread = Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+    print("✅ Bot thread started")
     
     print("✅ All services started successfully!")
     
@@ -224,18 +224,15 @@ def main():
     try:
         while True:
             time.sleep(1)
-            # Проверяем жив ли процесс бота
-            if not bot_process.is_alive():
-                print("❌ Bot process died, restarting...")
-                bot_process = multiprocessing.Process(target=run_bot)
-                bot_process.daemon = True
-                bot_process.start()
-                print("✅ Bot process restarted")
+            # Проверяем жив ли поток бота
+            if not bot_thread.is_alive():
+                print("❌ Bot thread died, restarting...")
+                bot_thread = Thread(target=run_bot, daemon=True)
+                bot_thread.start()
+                print("✅ Bot thread restarted")
                 
     except KeyboardInterrupt:
         print("🛑 Shutting down...")
-        if bot_process.is_alive():
-            bot_process.terminate()
         sys.exit(0)
 
 if __name__ == '__main__':
