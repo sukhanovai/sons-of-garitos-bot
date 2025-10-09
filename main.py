@@ -6,6 +6,7 @@ import requests
 from flask import Flask, request, jsonify
 from threading import Thread
 import asyncio
+import sys
 
 # Настройка логирования
 logging.basicConfig(
@@ -160,7 +161,7 @@ def run_flask():
     app.run(host='0.0.0.0', port=port, debug=False)
 
 # Основной код бота
-async def main():
+async def main_async():
     # Проверяем обновления при запуске
     updates_applied = check_updates_on_start()
     
@@ -198,6 +199,22 @@ async def main():
         time.sleep(10)
         os._exit(1)
 
+def main():
+    """Основная функция запуска"""
+    try:
+        # Создаем новую event loop для Python 3.12
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(main_async())
+    except KeyboardInterrupt:
+        print("🛑 Bot stopped by user")
+    except Exception as e:
+        print(f"❌ Main error: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        print("🔚 Shutting down...")
+
 if __name__ == '__main__':
     # Запускаем Flask в отдельном потоке
     Thread(target=run_flask, daemon=True).start()
@@ -208,5 +225,5 @@ if __name__ == '__main__':
     print("✅ Keep-alive started")
     
     print("🤖 Starting Sons of Garitos Bot...")
-    asyncio.run(main())
+    main()
     
