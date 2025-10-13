@@ -4,7 +4,7 @@ import time
 import subprocess
 import requests
 from flask import Flask, request, jsonify
-from threading import Thread
+import asyncio
 import sys
 
 # Настройка логирования
@@ -31,23 +31,14 @@ def ping():
 def restart():
     """Ручной перезапуск"""
     print("🔄 Manual restart triggered")
-    Thread(target=delayed_restart, daemon=True).start()
-    return "Restarting..."
+    return "Restarting... (Please restart manually via Replit interface)"
 
 @app.route('/github-webhook', methods=['POST'])
 def github_webhook():
     """Webhook для GitHub"""
     try:
         if request.headers.get('X-GitHub-Event') == 'push':
-            print("🔄 GitHub push received, pulling changes and restarting...")
-            
-            # Логируем полученные данные
-            data = request.json
-            if data:
-                repo_name = data.get('repository', {}).get('name', 'Unknown')
-                commit_message = data.get('head_commit', {}).get('message', 'No message')
-                print(f"📦 Repository: {repo_name}")
-                print(f"📝 Commit: {commit_message}")
+            print("🔄 GitHub push received, pulling changes...")
             
             # Обновляем код
             result = subprocess.run(['git', 'pull'], capture_output=True, text=True)
@@ -55,10 +46,7 @@ def github_webhook():
             if result.stderr:
                 print(f"❌ Git pull error: {result.stderr}")
             
-            # Перезапускаем
-            Thread(target=delayed_restart, daemon=True).start()
-            
-            return jsonify({"status": "success", "message": "Update triggered"})
+            return jsonify({"status": "success", "message": "Updates pulled. Please restart manually."})
         
         return jsonify({"status": "ignored", "message": "Not a push event"})
     
@@ -68,7 +56,7 @@ def github_webhook():
 
 @app.route('/update')
 def update():
-    """Принудительное обновление и перезапуск"""
+    """Принудительное обновление"""
     print("🔄 Forced update triggered")
     
     # Обновляем код
@@ -77,10 +65,7 @@ def update():
     if result.stderr:
         print(f"❌ Git pull error: {result.stderr}")
     
-    # Перезапускаем
-    Thread(target=delayed_restart, daemon=True).start()
-    
-    return "Updating and restarting..."
+    return "Updates pulled. Please restart manually via Replit interface."
 
 @app.route('/check-updates')
 def check_updates():
@@ -111,12 +96,6 @@ def check_updates():
             "message": f"Ошибка проверки обновлений: {e}"
         }), 500
 
-def delayed_restart():
-    """Отложенный перезапуск"""
-    time.sleep(2)
-    print("🔄 Restarting bot...")
-    os._exit(0)
-
 def check_updates_on_start():
     """Проверка обновлений при запуске"""
     print("🔍 Checking for updates on startup...")
@@ -138,25 +117,8 @@ def check_updates_on_start():
         print(f"❌ Update check error: {e}")
         return False
 
-def keep_alive():
-    """Функция для поддержания активности приложения"""
-    time.sleep(10)
-    
-    while True:
-        try:
-            # Пингуем локальный сервер вместо внешнего URL
-            response = requests.get('http://localhost:5000/ping', timeout=5)
-            print(f"🔄 Keep-alive ping: {response.status_code} - {time.strftime('%Y-%m-%d %H:%M:%S')}")
-            
-        except Exception as e:
-            print(f"❌ Keep-alive error: {e}")
-        
-        time.sleep(300)  # 5 минут
-
-def run_bot():
-    """Запуск бота в отдельном потоке"""
-    print("🤖 Starting Telegram Bot...")
-    
+async def run_bot():
+    """Запуск бота"""
     TOKEN = os.environ.get('BOT_TOKEN')
     
     if not TOKEN:
@@ -164,25 +126,16 @@ def run_bot():
         return
     
     try:
-        # Импортируем и настраиваем бота
         from bot import setup_bot
-        import asyncio
-        
-        # Создаем новую event loop для этого потока
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        # Запускаем бота
-        application = loop.run_until_complete(setup_bot(TOKEN))
+        application = await setup_bot(TOKEN)
         print("✅ Bot started successfully!")
-        
-        # Запускаем polling
-        loop.run_until_complete(application.run_polling())
-        
+        await application.run_polling()
     except Exception as e:
         print(f"❌ Bot error: {e}")
         import traceback
         traceback.print_exc()
+        # Не перезапускаем автоматически, чтобы избежать бесконечного цикла
+        sys.exit(1)
 
 def run_flask():
     """Запуск Flask сервера"""
@@ -196,45 +149,42 @@ def main():
     updates_applied = check_updates_on_start()
     
     if updates_applied:
-        print("🔄 Restarting to apply updates...")
-        time.sleep(2)
-        os._exit(0)
+        print("🔄 Please restart the bot to apply updates")
+        return
     
-    # Запускаем Flask в отдельном потоке
-    flask_thread = Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    print("✅ Flask server started")
+    print("🤖 Starting Sons of Garitos Bot...")
     
-    # Запускаем keep-alive в отдельном потоке
-    keep_alive_thread = Thread(target=keep_alive, daemon=True)
-    keep_alive_thread.start()
-    print("✅ Keep-alive started")
+    # В Replit мы не можем запускать Flask и бота одновременно из-за event loop
+    # Давайте спросим пользователя что запускать
     
-    # Даем время Flask запуститься
-    time.sleep(3)
+    print("\n" + "="*50)
+    print("Выберите режим запуска:")
+    print("1 - Запустить только Telegram бота")
+    print("2 - Запустить только Flask сервер (для вебхуков)")
+    print("3 - Запустить оба (может вызвать проблемы)")
+    print("="*50)
     
-    # Запускаем бота в отдельном потоке
-    bot_thread = Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    print("✅ Bot thread started")
+    choice = input("Введите номер (1, 2 или 3): ").strip()
     
-    print("✅ All services started successfully!")
-    
-    # Бесконечный цикл для поддержания работы
-    try:
-        while True:
-            time.sleep(1)
-            # Проверяем жив ли поток бота
-            if not bot_thread.is_alive():
-                print("❌ Bot thread died, restarting...")
-                bot_thread = Thread(target=run_bot, daemon=True)
-                bot_thread.start()
-                print("✅ Bot thread restarted")
-                
-    except KeyboardInterrupt:
-        print("🛑 Shutting down...")
-        sys.exit(0)
+    if choice == "1":
+        # Запускаем только бота
+        print("🚀 Starting Telegram Bot only...")
+        asyncio.run(run_bot())
+    elif choice == "2":
+        # Запускаем только Flask
+        print("🚀 Starting Flask server only...")
+        run_flask()
+    elif choice == "3":
+        # Пытаемся запустить оба (может не работать)
+        print("🚀 Trying to start both services...")
+        import threading
+        flask_thread = threading.Thread(target=run_flask, daemon=True)
+        flask_thread.start()
+        time.sleep(3)
+        asyncio.run(run_bot())
+    else:
+        print("❌ Неверный выбор. Запускаю только бота...")
+        asyncio.run(run_bot())
 
 if __name__ == '__main__':
     main()
-    
