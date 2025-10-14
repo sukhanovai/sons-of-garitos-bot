@@ -5,7 +5,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters, CallbackContext
 #from stay_alive import keep_alive
 
-BOT_TOKEN = "8108913508:AAH0Cp-Tweu-JQLxjPHfM7q6d2VF-L5HTHI" 
+export BOT_TOKEN="8108913508:AAH0Cp-Tweu-JQLxjPHfM7q6d2VF-L5HTHI"
+#BOT_TOKEN = "8108913508:AAH0Cp-Tweu-JQLxjPHfM7q6d2VF-L5HTHI" 
 
 # Настройка логирования
 logging.basicConfig(
