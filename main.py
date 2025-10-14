@@ -5,8 +5,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters, CallbackContext
 #from stay_alive import keep_alive
 
-export BOT_TOKEN="8108913508:AAH0Cp-Tweu-JQLxjPHfM7q6d2VF-L5HTHI"
-#BOT_TOKEN = "8108913508:AAH0Cp-Tweu-JQLxjPHfM7q6d2VF-L5HTHI" 
+BOT_TOKEN = "8108913508:AAH0Cp-Tweu-JQLxjPHfM7q6d2VF-L5HTHI" 
 
 # Настройка логирования
 logging.basicConfig(
@@ -371,8 +370,8 @@ def handle_photo(update: Update, context: CallbackContext):
         update.message.reply_text("🖼️ Изображение сохранено! Теперь введите текст записи:")
 
 def main():
-    TOKEN = os.environ.get('BOT_TOKEN')
-    
+    #TOKEN = os.environ.get('BOT_TOKEN')
+    TOKEN = BOT_TOKEN    
     if not TOKEN:
         print("❌ BOT_TOKEN not found!")
         return
