@@ -577,6 +577,7 @@ async def create_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
     
     context.user_data['creating_section'] = True
+    context.user_data['awaiting_section_name'] = True
     
     await query.edit_message_text(
         "➕ **Создание раздела**\n\n"
@@ -615,7 +616,12 @@ async def manage_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
     
     if not sections:
-        await query.edit_message_text("Разделы пока не созданы.")
+        keyboard = [
+            [InlineKeyboardButton("➕ Создать раздел", callback_data='create_section')],
+            [InlineKeyboardButton("◀️ Назад", callback_data='manage_content')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text("Разделы пока не созданы.", reply_markup=reply_markup)
         return
     
     keyboard = []
@@ -630,6 +636,7 @@ async def manage_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):
             callback_data=f"delete_section_{section[0]}"
         )])
     
+    keyboard.append([InlineKeyboardButton("➕ Создать раздел", callback_data='create_section')])
     keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data='manage_content')])
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -645,6 +652,7 @@ async def edit_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     section_id = int(query.data.split('_')[-1])
     context.user_data['editing_section'] = section_id
+    context.user_data['awaiting_section_name'] = True
     
     conn = get_db_connection()
     section = conn.execute('SELECT * FROM sections WHERE id = ?', (section_id,)).fetchone()
@@ -663,7 +671,6 @@ async def edit_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Текущее описание: {section_description}\n\n"
         f"Введите новое название раздела:"
     )
-    context.user_data['awaiting_section_name'] = True
 
 # Удаление раздела
 async def delete_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -770,24 +777,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif user_data.get('awaiting_section_name'):
         section_name = update.message.text
-        section_id = user_data.get('editing_section')
         
-        conn = get_db_connection()
-        if section_id:  # Редактирование существующего
+        if user_data.get('editing_section'):
+            # Редактирование существующего раздела
+            section_id = user_data['editing_section']
+            conn = get_db_connection()
             conn.execute('UPDATE sections SET name = ? WHERE id = ?', (section_name, section_id))
-            action = "обновлен"
-        else:  # Создание нового
-            conn.execute(
+            conn.commit()
+            conn.close()
+            
+            user_data.clear()
+            await update.message.reply_text(f"✅ Раздел '{section_name}' успешно обновлен!")
+        else:
+            # Создание нового раздела
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
                 'INSERT INTO sections (name, description, created_by) VALUES (?, ?, ?)',
                 (section_name, "Описание раздела", user.id)
             )
-            action = "создан"
+            conn.commit()
+            conn.close()
+            
+            user_data.clear()
+            await update.message.reply_text(f"✅ Раздел '{section_name}' успешно создан!")
         
-        conn.commit()
-        conn.close()
-        
-        user_data.clear()
-        await update.message.reply_text(f"✅ Раздел '{section_name}' успешно {action}!")
         await start(update, context)
     
     elif user_data.get('adding_post'):
@@ -813,6 +827,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif post_data['step'] == 'content_text':
             post_data['content_text'] = update.message.text
+            post_data['step'] = 'complete'
+            
+            # Сохраняем запись
+            await save_post(update, context, post_data, user)
+        
+        elif post_data['step'] == 'link_url':
+            link_url = update.message.text
+            
+            # Простая валидация URL
+            if not link_url.startswith(('http://', 'https://')):
+                link_url = 'https://' + link_url
+            
+            post_data['link_url'] = link_url
+            post_data['step'] = 'link_title'
+            
+            await update.message.reply_text("🔗 Введите заголовок для ссылки:")
+        
+        elif post_data['step'] == 'link_title':
+            post_data['link_title'] = update.message.text
             post_data['step'] = 'complete'
             
             # Сохраняем запись
@@ -849,9 +882,10 @@ async def save_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_dat
     content_type = post_data.get('content_type', 'text')
     
     cursor.execute('''
-        INSERT INTO posts (subsection_id, user_id, user_name, title, content_type, 
-                          content_text, image_file_id, link_url, link_title)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO posts (
+            subsection_id, user_id, user_name, title, content_type, 
+            content_text, image_file_id, link_url, link_title
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         post_data['subsection_id'],
         user.id,
@@ -868,8 +902,58 @@ async def save_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_dat
     conn.close()
     
     context.user_data.clear()
+    
     await update.message.reply_text("✅ Запись успешно добавлена!")
     await start(update, context)
+
+# Обработка callback запросов
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    
+    try:
+        if data == 'back_to_main':
+            await start(update, context)
+        elif data == 'view_sections':
+            await view_sections(update, context)
+        elif data.startswith('view_section_'):
+            await view_subsections(update, context)
+        elif data.startswith('view_subsection_'):
+            await view_subsection_posts(update, context)
+        elif data.startswith('prev_post_') or data.startswith('next_post_'):
+            await navigate_posts(update, context)
+        elif data == 'create_section':
+            await create_section(update, context)
+        elif data == 'create_subsection_choose_section':
+            await create_subsection_choose_section(update, context)
+        elif data.startswith('create_subsection_'):
+            await create_subsection(update, context)
+        elif data == 'add_post_choose_section':
+            await add_post_choose_section(update, context)
+        elif data.startswith('add_post_choose_subsection_'):
+            await add_post_choose_subsection(update, context)
+        elif data.startswith('add_post_'):
+            await add_post_start(update, context)
+        elif data == 'manage_content':
+            await manage_content(update, context)
+        elif data == 'manage_sections':
+            await manage_sections(update, context)
+        elif data.startswith('edit_section_'):
+            await edit_section(update, context)
+        elif data.startswith('delete_section_'):
+            await delete_section(update, context)
+        elif data.startswith('confirm_delete_section_'):
+            await confirm_delete_section(update, context)
+        elif data.startswith('content_type_'):
+            await handle_content_type(update, context)
+        else:
+            await query.answer("⚠️ Функция в разработке")
+    except Exception as e:
+        print(f"Error in callback: {e}")
+        try:
+            await query.answer("❌ Произошла ошибка")
+        except:
+            pass
 
 # Обработка выбора типа контента
 async def handle_content_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -883,95 +967,44 @@ async def handle_content_type(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_data = context.user_data
     
     if user_data.get('adding_post'):
-        user_data['adding_post']['content_type'] = content_type
+        post_data = user_data['adding_post']
+        post_data['content_type'] = content_type
         
         if content_type == 'text':
-            user_data['adding_post']['step'] = 'content_text'
+            post_data['step'] = 'content_text'
             await query.edit_message_text("📝 Введите текст записи:")
         
         elif content_type == 'image':
-            user_data['adding_post']['step'] = 'content_image'
+            post_data['step'] = 'image'
             await query.edit_message_text("🖼️ Отправьте изображение:")
         
         elif content_type == 'link':
-            user_data['adding_post']['step'] = 'link_url'
+            post_data['step'] = 'link_url'
             await query.edit_message_text("🔗 Введите URL ссылки:")
         
         elif content_type == 'mixed':
-            user_data['adding_post']['step'] = 'content_image'
+            post_data['step'] = 'image'
             await query.edit_message_text("🖼️ Сначала отправьте изображение:")
 
-# Обработка ссылок
-async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_data = context.user_data
-    
-    if user_data.get('adding_post') and user_data['adding_post'].get('step') == 'link_url':
-        link_url = update.message.text
-        
-        # Простая валидация URL
-        if not link_url.startswith(('http://', 'https://')):
-            link_url = 'https://' + link_url
-        
-        user_data['adding_post']['link_url'] = link_url
-        user_data['adding_post']['step'] = 'link_title'
-        
-        await update.message.reply_text("🔗 Введите заголовок для ссылки:")
-
-# Возврат в главное меню
-async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try:
-        await query.answer()
-    except:
-        pass
-    
-    keyboard = [
-        [InlineKeyboardButton("📚 Просмотреть разделы", callback_data='view_sections')],
-        [InlineKeyboardButton("➕ Создать раздел", callback_data='create_section')],
-        [InlineKeyboardButton("📁 Создать подраздел", callback_data='create_subsection_choose_section')],
-        [InlineKeyboardButton("📝 Добавить запись", callback_data='add_post_choose_section')],
-        [InlineKeyboardButton("⚙️ Управление контентом", callback_data='manage_content')]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text('🏰 Главное меню базы знаний клана:', reply_markup=reply_markup)
-
-# Настройка бота
-async def setup_bot(token: str):
+def main():
+    # Инициализация базы данных
     init_db()
     
-    application = Application.builder().token(token).build()
+    # Создание приложения
+    application = Application.builder().token(os.getenv('TELEGRAM_BOT_TOKEN')).build()
     
-    # Добавляем обработчик ошибок
-    application.add_error_handler(error_handler)
-    
-    # Обработчики команд
+    # Добавление обработчиков
     application.add_handler(CommandHandler("start", start))
-    
-    # Обработчики callback queries
-    application.add_handler(CallbackQueryHandler(view_sections, pattern='^view_sections$'))
-    application.add_handler(CallbackQueryHandler(view_subsections, pattern='^view_section_'))
-    application.add_handler(CallbackQueryHandler(view_subsection_posts, pattern='^view_subsection_'))
-    application.add_handler(CallbackQueryHandler(navigate_posts, pattern='^(prev|next)_post_'))
-    application.add_handler(CallbackQueryHandler(create_subsection_choose_section, pattern='^create_subsection_choose_section$'))
-    application.add_handler(CallbackQueryHandler(create_subsection, pattern='^create_subsection_'))
-    application.add_handler(CallbackQueryHandler(add_post_choose_section, pattern='^add_post_choose_section$'))
-    application.add_handler(CallbackQueryHandler(add_post_choose_subsection, pattern='^add_post_choose_subsection_'))
-    application.add_handler(CallbackQueryHandler(add_post_start, pattern='^add_post_'))
-    application.add_handler(CallbackQueryHandler(create_section, pattern='^create_section$'))
-    application.add_handler(CallbackQueryHandler(manage_content, pattern='^manage_content$'))
-    application.add_handler(CallbackQueryHandler(manage_sections, pattern='^manage_sections$'))
-    application.add_handler(CallbackQueryHandler(edit_section, pattern='^edit_section_'))
-    application.add_handler(CallbackQueryHandler(delete_section, pattern='^delete_section_'))
-    application.add_handler(CallbackQueryHandler(confirm_delete_section, pattern='^confirm_delete_section_'))
-    application.add_handler(CallbackQueryHandler(handle_content_type, pattern='^content_type_'))
-    application.add_handler(CallbackQueryHandler(back_to_main, pattern='^back_to_main$'))
-    
-    # Обработчики сообщений
+    application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     
-    print("✅ Bot setup completed")
-    return application
+    # Добавление обработчика ошибок
+    application.add_error_handler(error_handler)
     
+    # Запуск бота
+    print("🤖 Bot started!")
+    application.run_polling()
+
+if __name__ == '__main__':
+    main()
