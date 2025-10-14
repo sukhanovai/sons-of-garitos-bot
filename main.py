@@ -124,6 +124,8 @@ def button_handler(update: Update, context: CallbackContext):
         show_subsections(query, context)
     elif query.data.startswith('view_subsection_'):
         show_subsection_posts(query, context)
+    elif query.data.startswith('prev_post_') or query.data.startswith('next_post_'):
+        navigate_posts(query, context)
     elif query.data == 'add_post_choose_section':
         add_post_choose_section(query, context)
     elif query.data.startswith('add_post_choose_subsection_'):
@@ -146,6 +148,18 @@ def button_handler(update: Update, context: CallbackContext):
         delete_section(query, context)
     elif query.data.startswith('confirm_delete_section_'):
         confirm_delete_section(query, context)
+    elif query.data.startswith('edit_subsection_'):
+        edit_subsection(query, context)
+    elif query.data.startswith('delete_subsection_'):
+        delete_subsection(query, context)
+    elif query.data.startswith('confirm_delete_subsection_'):
+        confirm_delete_subsection(query, context)
+    elif query.data.startswith('edit_post_'):
+        edit_post(query, context)
+    elif query.data.startswith('delete_post_'):
+        delete_post(query, context)
+    elif query.data.startswith('confirm_delete_post_'):
+        confirm_delete_post(query, context)
     elif query.data == 'back_to_main':
         back_to_main(query, context)
 
@@ -257,8 +271,15 @@ def show_subsection_posts(query, context):
         )
         return
     
-    # Показываем первую запись
-    post = posts[0]
+    # Сохраняем данные для навигации
+    context.user_data['current_subsection'] = subsection_id
+    context.user_data['current_post_index'] = 0
+    context.user_data['posts'] = posts
+    
+    # Показываем первую запись с навигацией
+    show_post_navigation(query, context, posts[0], 0, len(posts), subsection, section)
+
+def show_post_navigation(query, context, post, index, total, subsection, section):
     post_text = f"📁 {section[1]} → {subsection[2]}\n\n"
     post_text += f"📌 {post[4]}\n\n"
     
@@ -270,15 +291,31 @@ def show_subsection_posts(query, context):
     
     post_text += f"👤 Автор: {post[3]}\n"
     post_text += f"📅 {post[10]}\n"
-    post_text += f"📊 (1/{len(posts)})"
+    post_text += f"📊 ({index + 1}/{total})"
     
-    keyboard = [
-        [InlineKeyboardButton("📝 Добавить запись", callback_data=f"add_post_{subsection_id}")],
-        [InlineKeyboardButton("✏️ Редактировать подраздел", callback_data=f"edit_subsection_{subsection_id}")],
-        [InlineKeyboardButton("🗑️ Удалить подраздел", callback_data=f"delete_subsection_{subsection_id}")],
+    # Кнопки навигации
+    keyboard = []
+    
+    # Навигация между записями
+    nav_buttons = []
+    if index > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️ Назад", callback_data=f"prev_post_{index}"))
+    if index < total - 1:
+        nav_buttons.append(InlineKeyboardButton("Вперед ➡️", callback_data=f"next_post_{index}"))
+    
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+    
+    # Кнопки действий
+    keyboard.extend([
+        [InlineKeyboardButton("✏️ Редактировать запись", callback_data=f"edit_post_{post[0]}")],
+        [InlineKeyboardButton("🗑️ Удалить запись", callback_data=f"delete_post_{post[0]}")],
+        [InlineKeyboardButton("📝 Добавить запись", callback_data=f"add_post_{subsection[0]}")],
+        [InlineKeyboardButton("✏️ Редактировать подраздел", callback_data=f"edit_subsection_{subsection[0]}")],
+        [InlineKeyboardButton("🗑️ Удалить подраздел", callback_data=f"delete_subsection_{subsection[0]}")],
         [InlineKeyboardButton("📁 К подразделам", callback_data=f"view_section_{section[0]}")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data='back_to_main')]
-    ]
+    ])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -286,6 +323,27 @@ def show_subsection_posts(query, context):
         query.edit_message_caption(caption=post_text, reply_markup=reply_markup)
     else:
         query.edit_message_text(post_text, reply_markup=reply_markup)
+
+def navigate_posts(query, context):
+    action = query.data.split('_')[0]  # 'prev' или 'next'
+    current_index = int(query.data.split('_')[-1])
+    
+    subsection_id = context.user_data['current_subsection']
+    posts = context.user_data['posts']
+    
+    # Определяем новый индекс
+    if action == 'prev':
+        new_index = current_index - 1
+    else:  # next
+        new_index = current_index + 1
+    
+    conn = get_db_connection()
+    subsection = conn.execute('SELECT * FROM subsections WHERE id = ?', (subsection_id,)).fetchone()
+    section = conn.execute('SELECT * FROM sections WHERE id = ?', (subsection[1],)).fetchone()
+    conn.close()
+    
+    context.user_data['current_post_index'] = new_index
+    show_post_navigation(query, context, posts[new_index], new_index, len(posts), subsection, section)
 
 def add_post_choose_section(query, context):
     conn = get_db_connection()
@@ -347,6 +405,7 @@ def add_post_start(query, context):
 
 def create_section(query, context):
     context.user_data['creating_section'] = True
+    context.user_data['awaiting_section_name'] = True
     query.edit_message_text(
         "➕ **Создание раздела**\n\n"
         "Введите название для нового раздела:"
@@ -371,6 +430,7 @@ def create_subsection_choose_section(query, context):
 def create_subsection(query, context):
     section_id = int(query.data.split('_')[-1])
     context.user_data['creating_subsection'] = {'section_id': section_id}
+    context.user_data['awaiting_subsection_name'] = True
     
     conn = get_db_connection()
     section = conn.execute('SELECT * FROM sections WHERE id = ?', (section_id,)).fetchone()
@@ -380,7 +440,6 @@ def create_subsection(query, context):
         f"📁 **Создание подраздела в разделе:** {section[1]}\n\n"
         "Введите название для нового подраздела:"
     )
-    context.user_data['awaiting_subsection_name'] = True
 
 def manage_content(query, context):
     keyboard = [
@@ -426,6 +485,7 @@ def manage_sections(query, context):
 def edit_section(query, context):
     section_id = int(query.data.split('_')[-1])
     context.user_data['editing_section'] = section_id
+    context.user_data['awaiting_section_name'] = True
     
     conn = get_db_connection()
     section = conn.execute('SELECT * FROM sections WHERE id = ?', (section_id,)).fetchone()
@@ -437,7 +497,6 @@ def edit_section(query, context):
         f"Текущее описание: {section[2]}\n\n"
         f"Введите новое название раздела:"
     )
-    context.user_data['awaiting_section_name'] = True
 
 def delete_section(query, context):
     section_id = int(query.data.split('_')[-1])
@@ -501,6 +560,138 @@ def confirm_delete_section(query, context):
     query.edit_message_text(f"✅ Раздел '{section[1]}' и все его содержимое успешно удалены!")
     manage_sections(query, context)
 
+def edit_subsection(query, context):
+    subsection_id = int(query.data.split('_')[-1])
+    context.user_data['editing_subsection'] = subsection_id
+    context.user_data['awaiting_subsection_name'] = True
+    
+    conn = get_db_connection()
+    subsection = conn.execute('SELECT * FROM subsections WHERE id = ?', (subsection_id,)).fetchone()
+    conn.close()
+    
+    query.edit_message_text(
+        f"✏️ **Редактирование подраздела**\n\n"
+        f"Текущее название: {subsection[2]}\n\n"
+        f"Введите новое название подраздела:"
+    )
+
+def delete_subsection(query, context):
+    subsection_id = int(query.data.split('_')[-1])
+    
+    conn = get_db_connection()
+    subsection = conn.execute('SELECT * FROM subsections WHERE id = ?', (subsection_id,)).fetchone()
+    
+    if not subsection:
+        query.edit_message_text("❌ Подраздел не найден!")
+        conn.close()
+        return
+    
+    # Проверяем есть ли записи
+    posts_count = conn.execute('SELECT COUNT(*) FROM posts WHERE subsection_id = ?', (subsection_id,)).fetchone()[0]
+    
+    if posts_count > 0:
+        conn.close()
+        keyboard = [
+            [InlineKeyboardButton("✅ Да, удалить всё", callback_data=f"confirm_delete_subsection_{subsection_id}")],
+            [InlineKeyboardButton("❌ Нет, отмена", callback_data=f"view_section_{subsection[1]}")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        query.edit_message_text(
+            f"⚠️ **Удаление подраздела**\n\n"
+            f"Подраздел '{subsection[2]}' содержит {posts_count} записей.\n"
+            f"Все записи будут также удалены!\n\n"
+            f"Вы уверены что хотите удалить подраздел?",
+            reply_markup=reply_markup
+        )
+        return
+    
+    # Удаляем подраздел если нет записей
+    conn.execute('DELETE FROM subsections WHERE id = ?', (subsection_id,))
+    conn.commit()
+    conn.close()
+    
+    query.edit_message_text(f"✅ Подраздел '{subsection[2]}' успешно удален!")
+    show_subsections(query, context)
+
+def confirm_delete_subsection(query, context):
+    subsection_id = int(query.data.split('_')[-1])
+    
+    conn = get_db_connection()
+    subsection = conn.execute('SELECT * FROM subsections WHERE id = ?', (subsection_id,)).fetchone()
+    
+    if not subsection:
+        query.edit_message_text("❌ Подраздел не найден!")
+        conn.close()
+        return
+    
+    # Удаляем все связанные записи
+    conn.execute('DELETE FROM posts WHERE subsection_id = ?', (subsection_id,))
+    conn.execute('DELETE FROM subsections WHERE id = ?', (subsection_id,))
+    conn.commit()
+    conn.close()
+    
+    query.edit_message_text(f"✅ Подраздел '{subsection[2]}' и все его записи успешно удалены!")
+    show_subsections(query, context)
+
+def edit_post(query, context):
+    post_id = int(query.data.split('_')[-1])
+    context.user_data['editing_post'] = post_id
+    context.user_data['awaiting_post_title'] = True
+    
+    conn = get_db_connection()
+    post = conn.execute('SELECT * FROM posts WHERE id = ?', (post_id,)).fetchone()
+    conn.close()
+    
+    query.edit_message_text(
+        f"✏️ **Редактирование записи**\n\n"
+        f"Текущий заголовок: {post[4]}\n"
+        f"Текущий текст: {post[6] if post[6] else 'Нет текста'}\n\n"
+        f"Введите новый заголовок записи:"
+    )
+
+def delete_post(query, context):
+    post_id = int(query.data.split('_')[-1])
+    
+    conn = get_db_connection()
+    post = conn.execute('SELECT * FROM posts WHERE id = ?', (post_id,)).fetchone()
+    
+    if not post:
+        query.edit_message_text("❌ Запись не найдена!")
+        conn.close()
+        return
+    
+    keyboard = [
+        [InlineKeyboardButton("✅ Да, удалить", callback_data=f"confirm_delete_post_{post_id}")],
+        [InlineKeyboardButton("❌ Нет, отмена", callback_data=f"view_subsection_{post[1]}")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    query.edit_message_text(
+        f"⚠️ **Удаление записи**\n\n"
+        f"Заголовок: {post[4]}\n\n"
+        f"Вы уверены что хотите удалить эту запись?",
+        reply_markup=reply_markup
+    )
+
+def confirm_delete_post(query, context):
+    post_id = int(query.data.split('_')[-1])
+    
+    conn = get_db_connection()
+    post = conn.execute('SELECT * FROM posts WHERE id = ?', (post_id,)).fetchone()
+    
+    if not post:
+        query.edit_message_text("❌ Запись не найдена!")
+        conn.close()
+        return
+    
+    subsection_id = post[1]
+    conn.execute('DELETE FROM posts WHERE id = ?', (post_id,))
+    conn.commit()
+    conn.close()
+    
+    query.edit_message_text(f"✅ Запись успешно удалена!")
+    show_subsection_posts(query, context)
+
 def back_to_main(query, context):
     keyboard = [
         [InlineKeyboardButton("📚 Просмотреть разделы", callback_data='view_sections')],
@@ -551,25 +742,36 @@ def handle_message(update: Update, context: CallbackContext):
             
             user_data.clear()
             update.message.reply_text("✅ Запись успешно добавлена!")
-            
-            # Возвращаем в главное меню
             back_to_main_message(update, context)
     
     elif user_data.get('awaiting_subsection_name'):
         subsection_name = update.message.text
-        section_id = user_data['creating_subsection']['section_id']
         
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            'INSERT INTO subsections (section_id, name, description, created_by) VALUES (?, ?, ?, ?)',
-            (section_id, subsection_name, "Описание подраздела", user.id)
-        )
-        conn.commit()
-        conn.close()
+        if user_data.get('editing_subsection'):
+            # Редактирование существующего подраздела
+            subsection_id = user_data['editing_subsection']
+            conn = get_db_connection()
+            conn.execute('UPDATE subsections SET name = ? WHERE id = ?', (subsection_name, subsection_id))
+            conn.commit()
+            conn.close()
+            
+            user_data.clear()
+            update.message.reply_text(f"✅ Подраздел '{subsection_name}' успешно обновлен!")
+        else:
+            # Создание нового подраздела
+            section_id = user_data['creating_subsection']['section_id']
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                'INSERT INTO subsections (section_id, name, description, created_by) VALUES (?, ?, ?, ?)',
+                (section_id, subsection_name, "Описание подраздела", user.id)
+            )
+            conn.commit()
+            conn.close()
+            
+            user_data.clear()
+            update.message.reply_text(f"✅ Подраздел '{subsection_name}' успешно создан!")
         
-        user_data.clear()
-        update.message.reply_text(f"✅ Подраздел '{subsection_name}' успешно создан!")
         back_to_main_message(update, context)
     
     elif user_data.get('awaiting_section_name'):
@@ -599,6 +801,37 @@ def handle_message(update: Update, context: CallbackContext):
             user_data.clear()
             update.message.reply_text(f"✅ Раздел '{section_name}' успешно создан!")
         
+        back_to_main_message(update, context)
+    
+    elif user_data.get('awaiting_post_title'):
+        new_title = update.message.text
+        post_id = user_data['editing_post']
+        
+        context.user_data['awaiting_post_title'] = False
+        context.user_data['awaiting_post_content'] = True
+        context.user_data['new_post_title'] = new_title
+        
+        update.message.reply_text(
+            f"📝 Новый заголовок сохранен: {new_title}\n\n"
+            f"Теперь введите новый текст записи:"
+        )
+    
+    elif user_data.get('awaiting_post_content'):
+        new_content = update.message.text
+        post_id = user_data['editing_post']
+        new_title = user_data['new_post_title']
+        
+        # Обновляем запись в БД
+        conn = get_db_connection()
+        conn.execute(
+            'UPDATE posts SET title = ?, content_text = ? WHERE id = ?',
+            (new_title, new_content, post_id)
+        )
+        conn.commit()
+        conn.close()
+        
+        user_data.clear()
+        update.message.reply_text("✅ Запись успешно обновлена!")
         back_to_main_message(update, context)
     
     else:
