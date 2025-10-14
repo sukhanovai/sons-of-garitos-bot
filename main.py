@@ -370,8 +370,8 @@ def handle_photo(update: Update, context: CallbackContext):
         update.message.reply_text("🖼️ Изображение сохранено! Теперь введите текст записи:")
 
 def main():
-    TOKEN = os.environ.get('BOT_TOKEN')
-    
+    TOKEN = "8108913508:AAH0Cp-Tweu-JQLxjPHfM7q6d2VF-L5HTHI"
+
     if not TOKEN:
         print("❌ BOT_TOKEN not found!")
         return
