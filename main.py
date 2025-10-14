@@ -3,7 +3,6 @@ import logging
 import sqlite3
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters, CallbackContext
-#from stay_alive import keep_alive
 
 BOT_TOKEN = "8108913508:AAH0Cp-Tweu-JQLxjPHfM7q6d2VF-L5HTHI" 
 
@@ -96,16 +95,24 @@ def init_db():
 def start(update: Update, context: CallbackContext):
     keyboard = [
         [InlineKeyboardButton("📚 Просмотреть разделы", callback_data='view_sections')],
+        [InlineKeyboardButton("➕ Создать раздел", callback_data='create_section')],
+        [InlineKeyboardButton("📁 Создать подраздел", callback_data='create_subsection_choose_section')],
         [InlineKeyboardButton("📝 Добавить запись", callback_data='add_post_choose_section')],
+        [InlineKeyboardButton("⚙️ Управление контентом", callback_data='manage_content')]
     ]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    update.message.reply_text(
-        '🏰 Добро пожаловать в базу знаний клана Sons of Garitos!\n\n'
-        'Выберите действие:',
-        reply_markup=reply_markup
+    user = update.effective_user
+    welcome_text = (
+        f'🏰 Добро пожаловать, {user.first_name}, в базу знаний клана Sons of Garitos!\n\n'
+        'Теперь вы можете создавать разделы, подразделы и добавлять различные типы контента!'
     )
+    
+    if update.message:
+        update.message.reply_text(welcome_text, reply_markup=reply_markup)
+    else:
+        update.callback_query.edit_message_text(welcome_text, reply_markup=reply_markup)
 
 def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
@@ -123,6 +130,22 @@ def button_handler(update: Update, context: CallbackContext):
         add_post_choose_subsection(query, context)
     elif query.data.startswith('add_post_'):
         add_post_start(query, context)
+    elif query.data == 'create_section':
+        create_section(query, context)
+    elif query.data == 'create_subsection_choose_section':
+        create_subsection_choose_section(query, context)
+    elif query.data.startswith('create_subsection_'):
+        create_subsection(query, context)
+    elif query.data == 'manage_content':
+        manage_content(query, context)
+    elif query.data == 'manage_sections':
+        manage_sections(query, context)
+    elif query.data.startswith('edit_section_'):
+        edit_section(query, context)
+    elif query.data.startswith('delete_section_'):
+        delete_section(query, context)
+    elif query.data.startswith('confirm_delete_section_'):
+        confirm_delete_section(query, context)
     elif query.data == 'back_to_main':
         back_to_main(query, context)
 
@@ -137,8 +160,17 @@ def show_sections(query, context):
     
     keyboard = []
     for section in sections:
+        conn = get_db_connection()
+        subs_count = conn.execute('SELECT COUNT(*) FROM subsections WHERE section_id = ?', (section[0],)).fetchone()[0]
+        posts_count = conn.execute('''
+            SELECT COUNT(*) FROM posts p 
+            JOIN subsections s ON p.subsection_id = s.id 
+            WHERE s.section_id = ?
+        ''', (section[0],)).fetchone()[0]
+        conn.close()
+        
         keyboard.append([InlineKeyboardButton(
-            section[1], 
+            f"{section[1]} ({subs_count} подраз., {posts_count} зап.)", 
             callback_data=f"view_section_{section[0]}"
         )])
     
@@ -157,14 +189,20 @@ def show_subsections(query, context):
     ).fetchall()
     conn.close()
     
+    if not section:
+        query.edit_message_text("❌ Раздел не найден!")
+        return
+    
     if not subsections:
         keyboard = [
-            [InlineKeyboardButton("📝 Добавить запись", callback_data=f"add_post_choose_subsection_{section_id}")],
+            [InlineKeyboardButton("📁 Создать подраздел", callback_data=f"create_subsection_{section_id}")],
+            [InlineKeyboardButton("✏️ Редактировать раздел", callback_data=f"edit_section_{section_id}")],
+            [InlineKeyboardButton("🗑️ Удалить раздел", callback_data=f"delete_section_{section_id}")],
             [InlineKeyboardButton("📂 К разделам", callback_data='view_sections')],
             [InlineKeyboardButton("🏠 Главное меню", callback_data='back_to_main')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        query.edit_message_text(f"В разделе '{section[1]}' пока нет подразделов.", reply_markup=reply_markup)
+        query.edit_message_text(f"В разделе '{section[1]}' пока нет подразделов.\n\nСоздайте первый подраздел!", reply_markup=reply_markup)
         return
     
     keyboard = []
@@ -179,7 +217,9 @@ def show_subsections(query, context):
         )])
     
     keyboard.extend([
-        [InlineKeyboardButton("📝 Добавить запись", callback_data=f"add_post_choose_subsection_{section_id}")],
+        [InlineKeyboardButton("📁 Создать подраздел", callback_data=f"create_subsection_{section_id}")],
+        [InlineKeyboardButton("✏️ Редактировать раздел", callback_data=f"edit_section_{section_id}")],
+        [InlineKeyboardButton("🗑️ Удалить раздел", callback_data=f"delete_section_{section_id}")],
         [InlineKeyboardButton("📂 К разделам", callback_data='view_sections')],
         [InlineKeyboardButton("🏠 Главное меню", callback_data='back_to_main')]
     ])
@@ -202,6 +242,8 @@ def show_subsection_posts(query, context):
     if not posts:
         keyboard = [
             [InlineKeyboardButton("📝 Добавить запись", callback_data=f"add_post_{subsection_id}")],
+            [InlineKeyboardButton("✏️ Редактировать подраздел", callback_data=f"edit_subsection_{subsection_id}")],
+            [InlineKeyboardButton("🗑️ Удалить подраздел", callback_data=f"delete_subsection_{subsection_id}")],
             [InlineKeyboardButton("📁 К подразделам", callback_data=f"view_section_{section[0]}")],
             [InlineKeyboardButton("🏠 Главное меню", callback_data='back_to_main')]
         ]
@@ -232,6 +274,8 @@ def show_subsection_posts(query, context):
     
     keyboard = [
         [InlineKeyboardButton("📝 Добавить запись", callback_data=f"add_post_{subsection_id}")],
+        [InlineKeyboardButton("✏️ Редактировать подраздел", callback_data=f"edit_subsection_{subsection_id}")],
+        [InlineKeyboardButton("🗑️ Удалить подраздел", callback_data=f"delete_subsection_{subsection_id}")],
         [InlineKeyboardButton("📁 К подразделам", callback_data=f"view_section_{section[0]}")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data='back_to_main')]
     ]
@@ -301,10 +345,169 @@ def add_post_start(query, context):
         f"Введите заголовок записи:"
     )
 
+def create_section(query, context):
+    context.user_data['creating_section'] = True
+    query.edit_message_text(
+        "➕ **Создание раздела**\n\n"
+        "Введите название для нового раздела:"
+    )
+
+def create_subsection_choose_section(query, context):
+    conn = get_db_connection()
+    sections = conn.execute('SELECT * FROM sections ORDER BY id').fetchall()
+    conn.close()
+    
+    keyboard = []
+    for section in sections:
+        keyboard.append([InlineKeyboardButton(
+            section[1], 
+            callback_data=f"create_subsection_{section[0]}"
+        )])
+    
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data='back_to_main')])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    query.edit_message_text("📁 **Создание подраздела**\n\nВыберите раздел:", reply_markup=reply_markup)
+
+def create_subsection(query, context):
+    section_id = int(query.data.split('_')[-1])
+    context.user_data['creating_subsection'] = {'section_id': section_id}
+    
+    conn = get_db_connection()
+    section = conn.execute('SELECT * FROM sections WHERE id = ?', (section_id,)).fetchone()
+    conn.close()
+    
+    query.edit_message_text(
+        f"📁 **Создание подраздела в разделе:** {section[1]}\n\n"
+        "Введите название для нового подраздела:"
+    )
+    context.user_data['awaiting_subsection_name'] = True
+
+def manage_content(query, context):
+    keyboard = [
+        [InlineKeyboardButton("📚 Управление разделами", callback_data='manage_sections')],
+        [InlineKeyboardButton("📁 Управление подразделами", callback_data='manage_subsections')],
+        [InlineKeyboardButton("📝 Управление записями", callback_data='manage_posts')],
+        [InlineKeyboardButton("◀️ Назад", callback_data='back_to_main')]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    query.edit_message_text("⚙️ **Управление контентом**\n\nВыберите что хотите управлять:", reply_markup=reply_markup)
+
+def manage_sections(query, context):
+    conn = get_db_connection()
+    sections = conn.execute('SELECT * FROM sections ORDER BY id').fetchall()
+    conn.close()
+    
+    if not sections:
+        keyboard = [
+            [InlineKeyboardButton("➕ Создать раздел", callback_data='create_section')],
+            [InlineKeyboardButton("◀️ Назад", callback_data='manage_content')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        query.edit_message_text("Разделы пока не созданы.", reply_markup=reply_markup)
+        return
+    
+    keyboard = []
+    for section in sections:
+        keyboard.append([InlineKeyboardButton(
+            f"✏️ {section[1]}", 
+            callback_data=f"edit_section_{section[0]}"
+        )])
+        keyboard.append([InlineKeyboardButton(
+            f"🗑️ Удалить {section[1]}", 
+            callback_data=f"delete_section_{section[0]}"
+        )])
+    
+    keyboard.append([InlineKeyboardButton("➕ Создать раздел", callback_data='create_section')])
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data='manage_content')])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    query.edit_message_text("📚 **Управление разделами**\n\nВыберите раздел для редактирования или удаления:", reply_markup=reply_markup)
+
+def edit_section(query, context):
+    section_id = int(query.data.split('_')[-1])
+    context.user_data['editing_section'] = section_id
+    
+    conn = get_db_connection()
+    section = conn.execute('SELECT * FROM sections WHERE id = ?', (section_id,)).fetchone()
+    conn.close()
+    
+    query.edit_message_text(
+        f"✏️ **Редактирование раздела**\n\n"
+        f"Текущее название: {section[1]}\n"
+        f"Текущее описание: {section[2]}\n\n"
+        f"Введите новое название раздела:"
+    )
+    context.user_data['awaiting_section_name'] = True
+
+def delete_section(query, context):
+    section_id = int(query.data.split('_')[-1])
+    
+    conn = get_db_connection()
+    section = conn.execute('SELECT * FROM sections WHERE id = ?', (section_id,)).fetchone()
+    
+    if not section:
+        query.edit_message_text("❌ Раздел не найден!")
+        conn.close()
+        return
+    
+    # Проверяем есть ли подразделы
+    subs_count = conn.execute('SELECT COUNT(*) FROM subsections WHERE section_id = ?', (section_id,)).fetchone()[0]
+    
+    if subs_count > 0:
+        conn.close()
+        keyboard = [
+            [InlineKeyboardButton("✅ Да, удалить всё", callback_data=f"confirm_delete_section_{section_id}")],
+            [InlineKeyboardButton("❌ Нет, отмена", callback_data='manage_sections')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        query.edit_message_text(
+            f"⚠️ **Удаление раздела**\n\n"
+            f"Раздел '{section[1]}' содержит {subs_count} подразделов.\n"
+            f"Все подразделы и записи в них будут также удалены!\n\n"
+            f"Вы уверены что хотите удалить раздел?",
+            reply_markup=reply_markup
+        )
+        return
+    
+    # Удаляем раздел если нет подразделов
+    conn.execute('DELETE FROM sections WHERE id = ?', (section_id,))
+    conn.commit()
+    conn.close()
+    
+    query.edit_message_text(f"✅ Раздел '{section[1]}' успешно удален!")
+    manage_sections(query, context)
+
+def confirm_delete_section(query, context):
+    section_id = int(query.data.split('_')[-1])
+    
+    conn = get_db_connection()
+    section = conn.execute('SELECT * FROM sections WHERE id = ?', (section_id,)).fetchone()
+    
+    if not section:
+        query.edit_message_text("❌ Раздел не найден!")
+        conn.close()
+        return
+    
+    # Удаляем все связанные записи и подразделы
+    subsections = conn.execute('SELECT id FROM subsections WHERE section_id = ?', (section_id,)).fetchall()
+    for subsection in subsections:
+        conn.execute('DELETE FROM posts WHERE subsection_id = ?', (subsection[0],))
+    
+    conn.execute('DELETE FROM subsections WHERE section_id = ?', (section_id,))
+    conn.execute('DELETE FROM sections WHERE id = ?', (section_id,))
+    conn.commit()
+    conn.close()
+    
+    query.edit_message_text(f"✅ Раздел '{section[1]}' и все его содержимое успешно удалены!")
+    manage_sections(query, context)
+
 def back_to_main(query, context):
     keyboard = [
         [InlineKeyboardButton("📚 Просмотреть разделы", callback_data='view_sections')],
+        [InlineKeyboardButton("➕ Создать раздел", callback_data='create_section')],
+        [InlineKeyboardButton("📁 Создать подраздел", callback_data='create_subsection_choose_section')],
         [InlineKeyboardButton("📝 Добавить запись", callback_data='add_post_choose_section')],
+        [InlineKeyboardButton("⚙️ Управление контентом", callback_data='manage_content')]
     ]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -350,12 +553,68 @@ def handle_message(update: Update, context: CallbackContext):
             update.message.reply_text("✅ Запись успешно добавлена!")
             
             # Возвращаем в главное меню
-            keyboard = [
-                [InlineKeyboardButton("📚 Просмотреть разделы", callback_data='view_sections')],
-                [InlineKeyboardButton("📝 Добавить запись", callback_data='add_post_choose_section')],
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            update.message.reply_text('🏰 Главное меню:', reply_markup=reply_markup)
+            back_to_main_message(update, context)
+    
+    elif user_data.get('awaiting_subsection_name'):
+        subsection_name = update.message.text
+        section_id = user_data['creating_subsection']['section_id']
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            'INSERT INTO subsections (section_id, name, description, created_by) VALUES (?, ?, ?, ?)',
+            (section_id, subsection_name, "Описание подраздела", user.id)
+        )
+        conn.commit()
+        conn.close()
+        
+        user_data.clear()
+        update.message.reply_text(f"✅ Подраздел '{subsection_name}' успешно создан!")
+        back_to_main_message(update, context)
+    
+    elif user_data.get('awaiting_section_name'):
+        section_name = update.message.text
+        
+        if user_data.get('editing_section'):
+            # Редактирование существующего раздела
+            section_id = user_data['editing_section']
+            conn = get_db_connection()
+            conn.execute('UPDATE sections SET name = ? WHERE id = ?', (section_name, section_id))
+            conn.commit()
+            conn.close()
+            
+            user_data.clear()
+            update.message.reply_text(f"✅ Раздел '{section_name}' успешно обновлен!")
+        else:
+            # Создание нового раздела
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                'INSERT INTO sections (name, description, created_by) VALUES (?, ?, ?)',
+                (section_name, "Описание раздела", user.id)
+            )
+            conn.commit()
+            conn.close()
+            
+            user_data.clear()
+            update.message.reply_text(f"✅ Раздел '{section_name}' успешно создан!")
+        
+        back_to_main_message(update, context)
+    
+    else:
+        update.message.reply_text("✅ Бот работает! Используйте /start для меню.")
+
+def back_to_main_message(update: Update, context: CallbackContext):
+    keyboard = [
+        [InlineKeyboardButton("📚 Просмотреть разделы", callback_data='view_sections')],
+        [InlineKeyboardButton("➕ Создать раздел", callback_data='create_section')],
+        [InlineKeyboardButton("📁 Создать подраздел", callback_data='create_subsection_choose_section')],
+        [InlineKeyboardButton("📝 Добавить запись", callback_data='add_post_choose_section')],
+        [InlineKeyboardButton("⚙️ Управление контентом", callback_data='manage_content')]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    update.message.reply_text('🏰 Главное меню базы знаний клана:', reply_markup=reply_markup)
 
 def handle_photo(update: Update, context: CallbackContext):
     user_data = context.user_data
@@ -370,7 +629,6 @@ def handle_photo(update: Update, context: CallbackContext):
         update.message.reply_text("🖼️ Изображение сохранено! Теперь введите текст записи:")
 
 def main():
-    #TOKEN = os.environ.get('BOT_TOKEN')
     TOKEN = BOT_TOKEN    
     if not TOKEN:
         print("❌ BOT_TOKEN not found!")
