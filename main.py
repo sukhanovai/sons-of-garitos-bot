@@ -3,7 +3,7 @@ import logging
 import sqlite3
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters, CallbackContext
-from stay_alive import keep_alive
+#from stay_alive import keep_alive
 
 # Настройка логирования
 logging.basicConfig(
