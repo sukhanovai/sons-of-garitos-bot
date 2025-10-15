@@ -1,0 +1,19 @@
+# Конфигурационные файлы
+config.py
+.env
+*.env
+
+# Базы данных
+*.db
+*.sqlite3
+
+# Логи
+*.log
+logs/
+
+# Временные файлы
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
