@@ -4,7 +4,12 @@ import sqlite3
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters, CallbackContext
 
-BOT_TOKEN = "8108913508:AAH0Cp-Tweu-JQLxjPHfM7q6d2VF-L5HTHI" 
+# Импортируем конфиг
+try:
+    from config import BOT_TOKEN
+except ImportError:
+    print("❌ Файл config.py не найден! Создайте его из config.example.py")
+    exit(1)
 
 # Настройка логирования
 logging.basicConfig(
@@ -862,9 +867,11 @@ def handle_photo(update: Update, context: CallbackContext):
         update.message.reply_text("🖼️ Изображение сохранено! Теперь введите текст записи:")
 
 def main():
-    TOKEN = BOT_TOKEN    
-    if not TOKEN:
-        print("❌ BOT_TOKEN not found!")
+    # Используем токен из config.py
+    TOKEN = BOT_TOKEN
+    
+    if not TOKEN or TOKEN == "YOUR_BOT_TOKEN_HERE":
+        print("❌ BOT_TOKEN не настроен! Проверьте файл config.py")
         return
     
     try:
