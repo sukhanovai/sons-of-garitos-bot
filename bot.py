@@ -1,10 +1,78 @@
 import sqlite3
 import os
+import time
+from typing import Dict, Any
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
 # Путь к базе данных - исправленный для Replit
 DB_PATH = os.path.join(os.getcwd(), 'clan_bot.db')
+
+# Менеджер сессий
+class SessionManager:
+    def __init__(self):
+        self.sessions: Dict[int, Dict[str, Any]] = {}
+        self.session_timeout = 3600  # 1 час
+        
+    def create_session(self, user_id: int):
+        """Создает новую сессию для пользователя"""
+        self.sessions[user_id] = {
+            'created_at': time.time(),
+            'current_section': None,
+            'current_subsection': None,
+            'current_post_index': 0,
+            'posts': [],
+            'adding_post': None,
+            'creating_section': False,
+            'creating_subsection': None,
+            'editing_section': None,
+            'editing_subsection': None,
+            'editing_post': None,
+            'awaiting_section_name': False,
+            'awaiting_subsection_name': False,
+            'awaiting_post_title': False,
+            'awaiting_post_content': False
+        }
+        return self.sessions[user_id]
+    
+    def get_session(self, user_id: int):
+        """Получает сессию пользователя"""
+        session = self.sessions.get(user_id)
+        if session and time.time() - session['created_at'] > self.session_timeout:
+            del self.sessions[user_id]
+            return None
+        return session
+    
+    def update_session(self, user_id: int, updates: Dict[str, Any]):
+        """Обновляет сессию пользователя"""
+        if user_id in self.sessions:
+            self.sessions[user_id].update(updates)
+            self.sessions[user_id]['created_at'] = time.time()  # Обновляем время
+        else:
+            self.create_session(user_id)
+            self.sessions[user_id].update(updates)
+    
+    def clear_session(self, user_id: int):
+        """Очищает сессию пользователя"""
+        if user_id in self.sessions:
+            del self.sessions[user_id]
+    
+    def clear_adding_data(self, user_id: int):
+        """Очищает данные о добавлении контента"""
+        if user_id in self.sessions:
+            self.sessions[user_id]['adding_post'] = None
+            self.sessions[user_id]['creating_section'] = False
+            self.sessions[user_id]['creating_subsection'] = None
+            self.sessions[user_id]['editing_section'] = None
+            self.sessions[user_id]['editing_subsection'] = None
+            self.sessions[user_id]['editing_post'] = None
+            self.sessions[user_id]['awaiting_section_name'] = False
+            self.sessions[user_id]['awaiting_subsection_name'] = False
+            self.sessions[user_id]['awaiting_post_title'] = False
+            self.sessions[user_id]['awaiting_post_content'] = False
+
+# Глобальный менеджер сессий
+session_manager = SessionManager()
 
 def get_db_connection():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -97,6 +165,10 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         error_msg = str(e)
         print(f"⚠️ Error handled: {error_msg}")
         
+        # Очищаем сессию пользователя при ошибках
+        if update and update.effective_user:
+            session_manager.clear_session(update.effective_user.id)
+        
         # Игнорируем ошибки устаревших callback queries
         if "Query is too old" in error_msg or "query id is invalid" in error_msg:
             return
@@ -105,7 +177,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update and update.effective_message:
             try:
                 await update.effective_message.reply_text(
-                    "❌ Произошла ошибка. Попробуйте снова."
+                    "❌ Произошла ошибка. Сессия сброшена. Используйте /start для перезапуска."
                 )
             except:
                 pass
@@ -119,6 +191,11 @@ def safe_get(data, index, default="Неизвестно"):
 
 # Главное меню
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    # Создаем новую сессию для пользователя
+    session_manager.create_session(user_id)
+    
     keyboard = [
         [InlineKeyboardButton("📚 Просмотреть разделы", callback_data='view_sections')],
         [InlineKeyboardButton("➕ Создать раздел", callback_data='create_section')],
@@ -146,6 +223,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Просмотр разделов
 async def view_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = update.effective_user.id
+    
+    # Проверяем сессию
+    session = session_manager.get_session(user_id)
+    if not session:
+        await query.answer("❌ Сессия устарела. Используйте /start")
+        return
+    
     try:
         await query.answer()
     except:
@@ -185,12 +270,23 @@ async def view_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Просмотр подразделов в разделе
 async def view_subsections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = update.effective_user.id
+    
+    # Проверяем сессию
+    session = session_manager.get_session(user_id)
+    if not session:
+        await query.answer("❌ Сессия устарела. Используйте /start")
+        return
+    
     try:
         await query.answer()
     except:
         pass
     
     section_id = int(query.data.split('_')[-1])
+    
+    # Обновляем сессию
+    session_manager.update_session(user_id, {'current_section': section_id})
     
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -256,12 +352,26 @@ async def view_subsections(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Просмотр записей в подразделе
 async def view_subsection_posts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = update.effective_user.id
+    
+    # Проверяем сессию
+    session = session_manager.get_session(user_id)
+    if not session:
+        await query.answer("❌ Сессия устарела. Используйте /start")
+        return
+    
     try:
         await query.answer()
     except:
         pass
     
     subsection_id = int(query.data.split('_')[-1])
+    
+    # Обновляем сессию пользователя
+    session_manager.update_session(user_id, {
+        'current_subsection': subsection_id,
+        'current_post_index': 0
+    })
     
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -286,6 +396,9 @@ async def view_subsection_posts(update: Update, context: ContextTypes.DEFAULT_TY
     section_name = safe_get(section, 1, "Без названия")
     subsection_name = safe_get(subsection, 2, "Без названия")
     
+    # Сохраняем посты в сессии пользователя
+    session_manager.update_session(user_id, {'posts': posts})
+    
     if not posts:
         keyboard = [
             [InlineKeyboardButton("📝 Добавить запись", callback_data=f"add_post_{subsection_id}")],
@@ -306,10 +419,6 @@ async def view_subsection_posts(update: Update, context: ContextTypes.DEFAULT_TY
         return
     
     # Показываем первую запись с навигацией
-    context.user_data['current_subsection'] = subsection_id
-    context.user_data['current_post_index'] = 0
-    context.user_data['posts'] = posts
-    
     await show_post(update, context, subsection, section, posts[0], 0, len(posts))
 
 async def show_post(update: Update, context: ContextTypes.DEFAULT_TYPE, subsection, section, post, index, total):
@@ -379,6 +488,14 @@ async def show_post(update: Update, context: ContextTypes.DEFAULT_TYPE, subsecti
 # Навигация по записям
 async def navigate_posts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = update.effective_user.id
+    
+    # Проверяем сессию
+    session = session_manager.get_session(user_id)
+    if not session:
+        await query.answer("❌ Сессия устарела. Используйте /start")
+        return
+    
     try:
         await query.answer()
     except:
@@ -386,8 +503,8 @@ async def navigate_posts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     action, index = query.data.split('_')[0], int(query.data.split('_')[-1])
     
-    subsection_id = context.user_data['current_subsection']
-    posts = context.user_data['posts']
+    subsection_id = session['current_subsection']
+    posts = session['posts']
     
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -400,12 +517,21 @@ async def navigate_posts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:  # next
         new_index = index + 1
     
-    context.user_data['current_post_index'] = new_index
+    # Обновляем индекс в сессии
+    session_manager.update_session(user_id, {'current_post_index': new_index})
     await show_post(update, context, subsection, section, posts[new_index], new_index, len(posts))
 
 # Выбор раздела для создания подраздела
 async def create_subsection_choose_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = update.effective_user.id
+    
+    # Проверяем сессию
+    session = session_manager.get_session(user_id)
+    if not session:
+        await query.answer("❌ Сессия устарела. Используйте /start")
+        return
+    
     try:
         await query.answer()
     except:
@@ -431,13 +557,26 @@ async def create_subsection_choose_section(update: Update, context: ContextTypes
 # Создание подраздела
 async def create_subsection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = update.effective_user.id
+    
+    # Проверяем сессию
+    session = session_manager.get_session(user_id)
+    if not session:
+        await query.answer("❌ Сессия устарела. Используйте /start")
+        return
+    
     try:
         await query.answer()
     except:
         pass
     
     section_id = int(query.data.split('_')[-1])
-    context.user_data['creating_subsection'] = {'section_id': section_id}
+    
+    # Обновляем сессию
+    session_manager.update_session(user_id, {
+        'creating_subsection': {'section_id': section_id},
+        'awaiting_subsection_name': True
+    })
     
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -454,11 +593,18 @@ async def create_subsection(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📁 **Создание подраздела в разделе:** {section_name}\n\n"
         "Введите название для нового подраздела:"
     )
-    context.user_data['awaiting_subsection_name'] = True
 
 # Выбор раздела для добавления записи
 async def add_post_choose_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = update.effective_user.id
+    
+    # Проверяем сессию
+    session = session_manager.get_session(user_id)
+    if not session:
+        await query.answer("❌ Сессия устарела. Используйте /start")
+        return
+    
     try:
         await query.answer()
     except:
@@ -484,6 +630,14 @@ async def add_post_choose_section(update: Update, context: ContextTypes.DEFAULT_
 # Выбор подраздела для добавления записи
 async def add_post_choose_subsection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = update.effective_user.id
+    
+    # Проверяем сессию
+    session = session_manager.get_session(user_id)
+    if not session:
+        await query.answer("❌ Сессия устарела. Используйте /start")
+        return
+    
     try:
         await query.answer()
     except:
@@ -527,16 +681,28 @@ async def add_post_choose_subsection(update: Update, context: ContextTypes.DEFAU
 # Начало добавления записи
 async def add_post_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = update.effective_user.id
+    
+    # Проверяем сессию
+    session = session_manager.get_session(user_id)
+    if not session:
+        await query.answer("❌ Сессия устарела. Используйте /start")
+        return
+    
     try:
         await query.answer()
     except:
         pass
     
     subsection_id = int(query.data.split('_')[-1])
-    context.user_data['adding_post'] = {
-        'subsection_id': subsection_id,
-        'step': 'title'
-    }
+    
+    # Обновляем сессию
+    session_manager.update_session(user_id, {
+        'adding_post': {
+            'subsection_id': subsection_id,
+            'step': 'title'
+        }
+    })
     
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -571,13 +737,24 @@ async def add_post_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Создание раздела
 async def create_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = update.effective_user.id
+    
+    # Проверяем сессию
+    session = session_manager.get_session(user_id)
+    if not session:
+        await query.answer("❌ Сессия устарела. Используйте /start")
+        return
+    
     try:
         await query.answer()
     except:
         pass
     
-    context.user_data['creating_section'] = True
-    context.user_data['awaiting_section_name'] = True
+    # Обновляем сессию
+    session_manager.update_session(user_id, {
+        'creating_section': True,
+        'awaiting_section_name': True
+    })
     
     await query.edit_message_text(
         "➕ **Создание раздела**\n\n"
@@ -587,6 +764,14 @@ async def create_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Управление контентом
 async def manage_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = update.effective_user.id
+    
+    # Проверяем сессию
+    session = session_manager.get_session(user_id)
+    if not session:
+        await query.answer("❌ Сессия устарела. Используйте /start")
+        return
+    
     try:
         await query.answer()
     except:
@@ -606,6 +791,14 @@ async def manage_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Управление разделами
 async def manage_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = update.effective_user.id
+    
+    # Проверяем сессию
+    session = session_manager.get_session(user_id)
+    if not session:
+        await query.answer("❌ Сессия устарела. Используйте /start")
+        return
+    
     try:
         await query.answer()
     except:
@@ -645,14 +838,26 @@ async def manage_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Редактирование раздела
 async def edit_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = update.effective_user.id
+    
+    # Проверяем сессию
+    session = session_manager.get_session(user_id)
+    if not session:
+        await query.answer("❌ Сессия устарела. Используйте /start")
+        return
+    
     try:
         await query.answer()
     except:
         pass
     
     section_id = int(query.data.split('_')[-1])
-    context.user_data['editing_section'] = section_id
-    context.user_data['awaiting_section_name'] = True
+    
+    # Обновляем сессию
+    session_manager.update_session(user_id, {
+        'editing_section': section_id,
+        'awaiting_section_name': True
+    })
     
     conn = get_db_connection()
     section = conn.execute('SELECT * FROM sections WHERE id = ?', (section_id,)).fetchone()
@@ -675,6 +880,14 @@ async def edit_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Удаление раздела
 async def delete_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = update.effective_user.id
+    
+    # Проверяем сессию
+    session = session_manager.get_session(user_id)
+    if not session:
+        await query.answer("❌ Сессия устарела. Используйте /start")
+        return
+    
     try:
         await query.answer()
     except:
@@ -723,6 +936,14 @@ async def delete_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Подтверждение удаления раздела
 async def confirm_delete_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = update.effective_user.id
+    
+    # Проверяем сессию
+    session = session_manager.get_session(user_id)
+    if not session:
+        await query.answer("❌ Сессия устарела. Используйте /start")
+        return
+    
     try:
         await query.answer()
     except:
@@ -755,38 +976,57 @@ async def confirm_delete_section(update: Update, context: ContextTypes.DEFAULT_T
 
 # Обработка текстовых сообщений
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_data = context.user_data
+    user_id = update.effective_user.id
+    session = session_manager.get_session(user_id)
+    
+    if not session:
+        await update.message.reply_text("❌ Сессия устарела. Используйте /start")
+        return
+    
     user = update.effective_user
     
-    if user_data.get('awaiting_subsection_name'):
+    if session.get('awaiting_subsection_name'):
         subsection_name = update.message.text
-        section_id = user_data['creating_subsection']['section_id']
         
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            'INSERT INTO subsections (section_id, name, description, created_by) VALUES (?, ?, ?, ?)',
-            (section_id, subsection_name, "Описание подраздела", user.id)
-        )
-        conn.commit()
-        conn.close()
+        if session.get('editing_subsection'):
+            # Редактирование существующего подраздела
+            subsection_id = session['editing_subsection']
+            conn = get_db_connection()
+            conn.execute('UPDATE subsections SET name = ? WHERE id = ?', (subsection_name, subsection_id))
+            conn.commit()
+            conn.close()
+            
+            session_manager.clear_adding_data(user_id)
+            await update.message.reply_text(f"✅ Подраздел '{subsection_name}' успешно обновлен!")
+        else:
+            # Создание нового подраздела
+            section_id = session['creating_subsection']['section_id']
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                'INSERT INTO subsections (section_id, name, description, created_by) VALUES (?, ?, ?, ?)',
+                (section_id, subsection_name, "Описание подраздела", user.id)
+            )
+            conn.commit()
+            conn.close()
+            
+            session_manager.clear_adding_data(user_id)
+            await update.message.reply_text(f"✅ Подраздел '{subsection_name}' успешно создан!")
         
-        user_data.clear()
-        await update.message.reply_text(f"✅ Подраздел '{subsection_name}' успешно создан!")
         await start(update, context)
     
-    elif user_data.get('awaiting_section_name'):
+    elif session.get('awaiting_section_name'):
         section_name = update.message.text
         
-        if user_data.get('editing_section'):
+        if session.get('editing_section'):
             # Редактирование существующего раздела
-            section_id = user_data['editing_section']
+            section_id = session['editing_section']
             conn = get_db_connection()
             conn.execute('UPDATE sections SET name = ? WHERE id = ?', (section_name, section_id))
             conn.commit()
             conn.close()
             
-            user_data.clear()
+            session_manager.clear_adding_data(user_id)
             await update.message.reply_text(f"✅ Раздел '{section_name}' успешно обновлен!")
         else:
             # Создание нового раздела
@@ -799,117 +1039,86 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.commit()
             conn.close()
             
-            user_data.clear()
+            session_manager.clear_adding_data(user_id)
             await update.message.reply_text(f"✅ Раздел '{section_name}' успешно создан!")
         
         await start(update, context)
     
-    elif user_data.get('adding_post'):
-        post_data = user_data['adding_post']
+    elif session.get('adding_post'):
+        post_data = session['adding_post']
         
         if post_data['step'] == 'title':
             post_data['title'] = update.message.text
-            post_data['step'] = 'content'
+            post_data['step'] = 'content_text'
             
-            keyboard = [
-                [InlineKeyboardButton("📝 Только текст", callback_data='content_type_text')],
-                [InlineKeyboardButton("🖼️ Только изображение", callback_data='content_type_image')],
-                [InlineKeyboardButton("🔗 Только ссылка", callback_data='content_type_link')],
-                [InlineKeyboardButton("📄 Текст + изображение", callback_data='content_type_mixed')]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+            # Обновляем сессию
+            session_manager.update_session(user_id, {'adding_post': post_data})
             
             await update.message.reply_text(
                 f"📝 Заголовок сохранен: {post_data['title']}\n\n"
-                f"Выберите тип контента:",
-                reply_markup=reply_markup
+                f"Теперь введите текст записи:"
             )
         
         elif post_data['step'] == 'content_text':
             post_data['content_text'] = update.message.text
-            post_data['step'] = 'complete'
             
-            # Сохраняем запись
-            await save_post(update, context, post_data, user)
-        
-        elif post_data['step'] == 'link_url':
-            link_url = update.message.text
+            # Сохраняем запись в БД
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO posts (subsection_id, user_id, user_name, title, content_type, content_text)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (
+                post_data['subsection_id'],
+                user.id,
+                user.first_name,
+                post_data['title'],
+                'text',
+                post_data['content_text']
+            ))
+            conn.commit()
+            conn.close()
             
-            # Простая валидация URL
-            if not link_url.startswith(('http://', 'https://')):
-                link_url = 'https://' + link_url
-            
-            post_data['link_url'] = link_url
-            post_data['step'] = 'link_title'
-            
-            await update.message.reply_text("🔗 Введите заголовок для ссылки:")
-        
-        elif post_data['step'] == 'link_title':
-            post_data['link_title'] = update.message.text
-            post_data['step'] = 'complete'
-            
-            # Сохраняем запись
-            await save_post(update, context, post_data, user)
+            session_manager.clear_adding_data(user_id)
+            await update.message.reply_text("✅ Запись успешно добавлена!")
+            await start(update, context)
     
     else:
         await update.message.reply_text("✅ Бот работает! Используйте /start для меню.")
 
 # Обработка изображений
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_data = context.user_data
+    user_id = update.effective_user.id
+    session = session_manager.get_session(user_id)
     
-    if user_data.get('adding_post'):
-        post_data = user_data['adding_post']
+    if not session:
+        await update.message.reply_text("❌ Сессия устарела. Используйте /start")
+        return
+    
+    if session.get('adding_post'):
+        post_data = session['adding_post']
         
-        if post_data.get('content_type') == 'image' or post_data.get('content_type') == 'mixed':
-            # Сохраняем file_id изображения
-            photo = update.message.photo[-1]
-            post_data['image_file_id'] = photo.file_id
-            
-            if post_data['content_type'] == 'image':
-                post_data['step'] = 'complete'
-                await save_post(update, context, post_data, update.effective_user)
-            else:
-                post_data['step'] = 'content_text'
-                await update.message.reply_text("🖼️ Изображение сохранено! Теперь введите текст:")
-
-# Сохранение записи в БД
-async def save_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_data, user):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Определяем тип контента
-    content_type = post_data.get('content_type', 'text')
-    
-    cursor.execute('''
-        INSERT INTO posts (
-            subsection_id, user_id, user_name, title, content_type, 
-            content_text, image_file_id, link_url, link_title
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        post_data['subsection_id'],
-        user.id,
-        user.first_name,
-        post_data['title'],
-        content_type,
-        post_data.get('content_text'),
-        post_data.get('image_file_id'),
-        post_data.get('link_url'),
-        post_data.get('link_title')
-    ))
-    
-    conn.commit()
-    conn.close()
-    
-    context.user_data.clear()
-    
-    await update.message.reply_text("✅ Запись успешно добавлена!")
-    await start(update, context)
+        # Сохраняем file_id изображения
+        photo = update.message.photo[-1]
+        post_data['image_file_id'] = photo.file_id
+        
+        # Обновляем сессию
+        session_manager.update_session(user_id, {'adding_post': post_data})
+        
+        await update.message.reply_text("🖼️ Изображение сохранено! Теперь введите текст записи:")
 
 # Обработка callback запросов
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = update.effective_user.id
     data = query.data
+    
+    # Проверяем сессию для всех callback, кроме back_to_main
+    if data != 'back_to_main':
+        session = session_manager.get_session(user_id)
+        if not session:
+            await query.answer("❌ Сессия устарела. Используйте /start")
+            return
     
     try:
         if data == 'back_to_main':
@@ -944,8 +1153,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await delete_section(update, context)
         elif data.startswith('confirm_delete_section_'):
             await confirm_delete_section(update, context)
-        elif data.startswith('content_type_'):
-            await handle_content_type(update, context)
         else:
             await query.answer("⚠️ Функция в разработке")
     except Exception as e:
@@ -954,37 +1161,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("❌ Произошла ошибка")
         except:
             pass
-
-# Обработка выбора типа контента
-async def handle_content_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try:
-        await query.answer()
-    except:
-        pass
-    
-    content_type = query.data.split('_')[-1]
-    user_data = context.user_data
-    
-    if user_data.get('adding_post'):
-        post_data = user_data['adding_post']
-        post_data['content_type'] = content_type
-        
-        if content_type == 'text':
-            post_data['step'] = 'content_text'
-            await query.edit_message_text("📝 Введите текст записи:")
-        
-        elif content_type == 'image':
-            post_data['step'] = 'image'
-            await query.edit_message_text("🖼️ Отправьте изображение:")
-        
-        elif content_type == 'link':
-            post_data['step'] = 'link_url'
-            await query.edit_message_text("🔗 Введите URL ссылки:")
-        
-        elif content_type == 'mixed':
-            post_data['step'] = 'image'
-            await query.edit_message_text("🖼️ Сначала отправьте изображение:")
 
 def main():
     # Инициализация базы данных
@@ -1003,8 +1179,9 @@ def main():
     application.add_error_handler(error_handler)
     
     # Запуск бота
-    print("🤖 Bot started!")
+    print("🤖 Bot started with user session management!")
     application.run_polling()
 
 if __name__ == '__main__':
     main()
+    
