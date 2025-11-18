@@ -2,6 +2,7 @@ import sqlite3
 import os
 import time
 import asyncio
+import re
 from typing import Dict, Any, List, Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
@@ -961,11 +962,12 @@ async def confirm_delete_section(update: Update, context: ContextTypes.DEFAULT_T
     await manage_sections(update, context)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик текстовых сообщений - реагирует только на активные сессии"""
     user_id = update.effective_user.id
     session = get_user_session(user_id)
     
+    # Если нет активной сессии - игнорируем сообщение
     if not session:
-        await update.message.reply_text("❌ Сессия устарела. Используйте /start")
         return
     
     user = update.effective_user
@@ -1064,16 +1066,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             session.clear_adding_state()
             await update.message.reply_text("✅ Запись успешно добавлена!")
             await start(update, context)
-    
-    else:
-        await update.message.reply_text("✅ Бот работает! Используйте /start для меню.")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик фото - реагирует только на активные сессии"""
     user_id = update.effective_user.id
     session = get_user_session(user_id)
     
+    # Если нет активной сессии - игнорируем фото
     if not session:
-        await update.message.reply_text("❌ Сессия устарела. Используйте /start")
         return
     
     if session.adding_post:
@@ -1086,11 +1086,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🖼️ Изображение сохранено! Теперь введите текст записи:")
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик callback-запросов от кнопок"""
     query = update.callback_query
     user_id = update.effective_user.id
     data = query.data
     
-    # Проверяем сессию для всех callback, кроме back_to_main
+    # Для callback всегда проверяем сессию (кроме возврата в главное меню)
     if data != 'back_to_main':
         session = get_user_session(user_id)
         if not session:
@@ -1146,17 +1147,30 @@ def main():
     # Создание приложения
     application = Application.builder().token(os.getenv('TELEGRAM_BOT_TOKEN')).build()
     
-    # Добавление обработчиков
+    # Добавление обработчиков - ВАЖНО: правильный порядок и фильтры
+    
+    # 1. Обработчики команд (только команды)
     application.add_handler(CommandHandler("start", start))
+    
+    # 2. Обработчики callback-запросов (только от кнопок)
     application.add_handler(CallbackQueryHandler(handle_callback))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    
+    # 3. Обработчики сообщений - ТОЛЬКО для активных сессий
+    # Эти обработчики будут срабатывать только если есть активная сессия
+    application.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND, 
+        handle_message
+    ))
+    application.add_handler(MessageHandler(
+        filters.PHOTO, 
+        handle_photo
+    ))
     
     # Добавление обработчика ошибок
     application.add_error_handler(error_handler)
     
     # Запуск бота
-    print("🤖 Bot started with fully isolated user sessions!")
+    print("🤖 Bot started - will only respond to commands and active sessions!")
     application.run_polling()
 
 if __name__ == '__main__':
